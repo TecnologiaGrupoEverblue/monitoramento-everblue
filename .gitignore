@@ -1,0 +1,34 @@
+# Segredos — nunca versionar
+.env
+.env.local
+.env.producao
+.env.*.local
+*.pem
+*.key
+# Exceção: raízes de confiança PÚBLICAS (sem chave privada).
+!infrastructure/confianca/*.pem
+
+# Certificados — o par vive só no servidor (ver infrastructure/nginx/certs/LEIA-ME.txt)
+*.crt
+*.csr
+*.p12
+*.pfx
+infrastructure/nginx/certs/openssl.cnf
+
+# Dependências e artefatos
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Dados, dumps e logs
+/dados/
+*.dump
+*.tar.gz
+*.log
+
+# Editor / SO
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

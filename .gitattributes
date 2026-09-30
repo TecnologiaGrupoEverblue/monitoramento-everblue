@@ -1,0 +1,17 @@
+# Roteiros e configurações rodam no Linux: fim de linha LF sempre, mesmo quando
+# o repositório é clonado no Windows (CRLF quebra bash, nginx e o entrypoint).
+* text=auto eol=lf
+*.sh        text eol=lf
+*.conf      text eol=lf
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*Dockerfile text eol=lf
+*.sql       text eol=lf
+.env*       text eol=lf
+# Arquivos do Windows (o .cmd é lido pelo cmd.exe): CRLF sempre.
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+*.png  binary
+*.webp binary
+*.woff2 binary
+*.xlsx binary

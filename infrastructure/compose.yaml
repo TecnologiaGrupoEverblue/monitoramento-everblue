@@ -1,0 +1,259 @@
+name: everblue-monitoramento
+
+# VM de referência: 4 vCPU, 8 GB de RAM, disco de dados em
+# /opt/everblue-monitoramento (DADOS_DIR). Os limites de memória abaixo somam
+# ~5,4 GB e deixam folga para o sistema e o cache de página do Linux — que é
+# de onde o PostgreSQL tira boa parte do desempenho de leitura.
+#
+# NUNCA `docker compose down -v`: os dados vivem em bind mounts de DADOS_DIR,
+# e o backup segue o processo corporativo (não é papel do MinIO).
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Ambiente da API e da migração: SÓ o que a aplicação usa. As credenciais raiz
+# do PostgreSQL e do MinIO ficam fora do contêiner da aplicação de propósito —
+# uma falha na API não entrega a chave do cofre inteiro.
+x-ambiente-api: &ambiente-api
+  AMBIENTE: ${AMBIENTE:-producao}
+  TZ: ${TZ:-America/Sao_Paulo}
+  NIVEL_LOG: ${NIVEL_LOG:-info}
+  URL_PUBLICA: ${URL_PUBLICA}
+  COOKIE_SEGURO: ${COOKIE_SEGURO:-true}
+  DATABASE_URL: ${DATABASE_URL}
+  DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+  SESSAO_SEGREDO: ${SESSAO_SEGREDO}
+  SESSAO_HORAS: ${SESSAO_HORAS:-8}
+  COFRE_CHAVE: ${COFRE_CHAVE}
+  ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:-}
+  ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:-}
+  ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:-}
+  ENTRA_REDIRECT_URI: ${ENTRA_REDIRECT_URI:-}
+  ENTRA_MAPA_PERFIL: ${ENTRA_MAPA_PERFIL:-}
+  ENTRA_PERFIL_PADRAO: ${ENTRA_PERFIL_PADRAO:-leitor}
+  ENTRA_TIMEOUT_S: ${ENTRA_TIMEOUT_S:-15}
+  ENTRA_GRAPH_PERFIL: ${ENTRA_GRAPH_PERFIL:-true}
+  DIRETORIO_URL: ${DIRETORIO_URL:-}
+  DIRETORIO_CLIENT_ID: ${DIRETORIO_CLIENT_ID:-}
+  DIRETORIO_INTEGRATION_SECRET: ${DIRETORIO_INTEGRATION_SECRET:-}
+  DIRETORIO_TIMEOUT_S: ${DIRETORIO_TIMEOUT_S:-20}
+  DIRETORIO_GRACA_MINUTOS: ${DIRETORIO_GRACA_MINUTOS:-0}
+  FOTO_FONTE: ${FOTO_FONTE:-graph}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+  LOGIN_MAX_TENTATIVAS: ${LOGIN_MAX_TENTATIVAS:-5}
+  LOGIN_BLOQUEIO_MINUTOS: ${LOGIN_BLOQUEIO_MINUTOS:-15}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+  MINIO_REGIAO: ${MINIO_REGIAO:-us-east-1}
+  MINIO_BUCKET: ${MINIO_BUCKET}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+  MINIO_OBJECT_LOCK: ${MINIO_OBJECT_LOCK:-false}
+  IMPORTACAO_MAX_MB: ${IMPORTACAO_MAX_MB:-20}
+  IMPORTACAO_MAX_LINHAS: ${IMPORTACAO_MAX_LINHAS:-20000}
+  ARQUIVOS_MAX_MB: ${ARQUIVOS_MAX_MB:-0}
+  ARQUIVOS_EXTENSOES_BLOQUEADAS: ${ARQUIVOS_EXTENSOES_BLOQUEADAS:-}
+  # Raiz PÚBLICA da AC interna que assina https://intranet.grupoeverblue.com.br
+  # (PKI Everblue v2). SOMA-SE às raízes públicas do Node; a verificação TLS
+  # continua ligada para tudo. Ver infrastructure/confianca/LEIA-ME.txt.
+  NODE_EXTRA_CA_CERTS: /etc/everblue/confianca/intranet-raiz-v2.pem
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,minio,api}
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: emon-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      # Papel da APLICAÇÃO (dono do banco, sem superusuário). Criado uma única
+      # vez por database/init/01_papel_aplicacao.sh na inicialização do volume.
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - ${DADOS_DIR}/postgres:/var/lib/postgresql/data
+      - ../database/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=3GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_connections=50
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - log_min_duration_statement=2000
+      - -c
+      - timezone=${TZ}
+    shm_size: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2560M
+    networks: [interna]
+    logging: *logging
+
+  # Repositório central de TODOS os arquivos (importados, processados,
+  # exportados, anexos), com ciclo de vida completo. Não é backup. Porta 9000/9001 só na rede interna do
+  # Docker: nada do MinIO é publicado no host.
+  minio:
+    # Compilado do código-fonte oficial (a MinIO não publica mais imagem da
+    # edição comunitária). Versões fixadas no .env: MINIO_VERSAO e MC_VERSAO.
+    build:
+      context: ..
+      dockerfile: infrastructure/minio.Dockerfile
+      args:
+        MINIO_VERSAO: ${MINIO_VERSAO:-RELEASE.2025-10-15T17-29-55Z}
+        MC_VERSAO: ${MC_VERSAO:-RELEASE.2025-08-13T08-35-41Z}
+    image: everblue-monitoramento-minio:local
+    container_name: emon-minio
+    restart: unless-stopped
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BROWSER: "off"
+      TZ: ${TZ}
+    volumes:
+      - ${DADOS_DIR}/minio:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    networks: [interna]
+    logging: *logging
+
+  # Execução única e idempotente: cria o bucket (com Object Lock, se pedido),
+  # liga o versionamento e cria o usuário DA APLICAÇÃO com política mínima.
+  # A API nunca usa a credencial raiz.
+  minio-init:
+    # Mesma imagem do servidor: ela já traz o `mc`.
+    image: everblue-monitoramento-minio:local
+    container_name: emon-minio-init
+    restart: "no"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_OBJECT_LOCK: ${MINIO_OBJECT_LOCK:-false}
+    volumes:
+      - ./minio:/config:ro
+    entrypoint: ["/bin/sh", "/config/inicializar.sh"]
+    depends_on:
+      minio: {condition: service_healthy}
+    networks: [interna]
+    logging: *logging
+
+  # Migrações + bootstrap idempotente. Roda e termina; a API só sobe depois
+  # que ela terminar com sucesso.
+  migracao:
+    build:
+      context: ..
+      dockerfile: infrastructure/api.Dockerfile
+    image: everblue-monitoramento-api:local
+    container_name: emon-migracao
+    restart: "no"
+    environment: *ambiente-api
+    volumes:
+      - ./confianca:/etc/everblue/confianca:ro
+    command: ["node", "dist/cli.js", "migrar"]
+    depends_on:
+      db: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [interna]
+    logging: *logging
+
+  api:
+    image: everblue-monitoramento-api:local
+    container_name: emon-api
+    restart: unless-stopped
+    environment:
+      <<: *ambiente-api
+      PORTA: "3000"
+    volumes:
+      - ./confianca:/etc/everblue/confianca:ro
+    depends_on:
+      db: {condition: service_healthy}
+      migracao: {condition: service_completed_successfully}
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    networks: [interna]
+    logging: *logging
+
+  # O nginx serve o front (build estático do React embutido na imagem) e faz
+  # proxy de /api, /entrar/entra e /oauth para a API. É o ÚNICO serviço com
+  # porta publicada no host.
+  nginx:
+    build:
+      context: ..
+      dockerfile: infrastructure/web.Dockerfile
+    image: everblue-monitoramento-web:local
+    container_name: emon-nginx
+    restart: unless-stopped
+    ports:
+      - "${PORTA_HTTP:-80}:80"
+      - "${PORTA_HTTPS:-443}:443"
+    volumes:
+      # DIRETÓRIO, não arquivo: bind de arquivo isolado prende o contêiner ao
+      # inode antigo quando a atualização substitui o arquivo (lição da IA).
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/incluir:/etc/nginx/incluir:ro
+      # Certificado e chave: gerados NO SERVIDOR e fora do pacote.
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      api: {condition: service_started}
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+    networks: [interna]
+    logging: *logging
+
+networks:
+  interna:
+    driver: bridge

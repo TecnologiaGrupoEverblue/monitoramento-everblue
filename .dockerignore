@@ -1,0 +1,28 @@
+# Segredos e certificados nunca entram em imagem
+.env
+.env.*
+!.env.example
+**/*.key
+**/*.crt
+**/*.csr
+**/*.pem
+infrastructure/nginx/certs
+
+# Artefatos locais
+**/node_modules
+**/dist
+**/coverage
+**/*.log
+**/*.tsbuildinfo
+.git
+.vscode
+.idea
+
+# Não fazem parte das imagens
+docs
+infrastructure/scripts
+infrastructure/servidor
+infrastructure/windows
+*.dump
+*.tar.gz
+*.zip

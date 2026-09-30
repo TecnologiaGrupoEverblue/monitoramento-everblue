@@ -1,0 +1,16 @@
+Certificado TLS do Monitoramento — este diretório fica VAZIO no pacote.
+
+A chave privada é gerada NO PRÓPRIO SERVIDOR e nunca sai dele:
+
+    cd /opt/everblue-monitoramento/app
+    ./infrastructure/scripts/certificado.sh csr            # caminho normal: AC interna assina
+    ./infrastructure/scripts/certificado.sh autoassinado   # só para testar antes de a AC responder
+    ./infrastructure/scripts/certificado.sh conferir       # confere o certificado devolvido pela AC
+
+Resultado esperado neste diretório:
+
+    emon.key   chave privada, permissão 600, nunca sai do servidor
+    emon.crt   certificado do servidor + cadeia intermediária, nesta ordem
+
+O certificado cobre monitoramento.grupoeverblue.com.br.
+Sem estes dois arquivos o nginx não inicia, e o implantar.sh avisa antes.

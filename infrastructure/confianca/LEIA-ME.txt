@@ -1,0 +1,13 @@
+Raízes de confiança PÚBLICAS usadas pela API do Monitoramento.
+
+intranet-raiz-v2.pem
+  "Everblue Intranet Root CA v2" — AC interna que assina o certificado de
+  https://intranet.grupoeverblue.com.br (PKI Everblue v2, 16/09/2026).
+  SHA-256: A6:3C:3A:FB:DF:BE:1C:DB:E9:CF:C7:FF:32:0A:8D:36:94:9B:35:68:D9:08:70:43:10:B4:5D:56:91:E7:63:50
+  Mesma raiz distribuída por GPO aos computadores da companhia.
+
+Entra na API por NODE_EXTRA_CA_CERTS (compose.yaml), somando-se às raízes
+públicas do Node — nunca substituindo nem desligando a verificação TLS.
+Só certificado público: nenhuma chave privada fica aqui.
+Rotação da raiz: trocar o arquivo, atualizar o SHA-256 em
+infrastructure/scripts/conectar_intranet.sh e reimplantar.

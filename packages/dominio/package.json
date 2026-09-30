@@ -1,0 +1,22 @@
+{
+  "name": "@monitoramento/dominio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tipos, regras de neg\u00f3cio puras e contratos compartilhados entre API e interface.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fixtures": "./src/fixtures/gerarDadosFicticios.ts"
+  },
+  "dependencies": {
+    "date-fns": "^4.4.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

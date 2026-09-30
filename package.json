@@ -1,0 +1,22 @@
+{
+  "name": "everblue-monitoramento",
+  "version": "1.0.4",
+  "private": true,
+  "description": "EverBlue Monitoramento — gestão semanal do Comitê de Monitoramento do FIDC.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev:api": "npm run dev -w @monitoramento/api",
+    "dev:web": "npm run dev -w @monitoramento/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+  }
+}
