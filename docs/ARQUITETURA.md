@@ -15,13 +15,13 @@ navegador ──443──> nginx ──┬── /assets, /, rotas da SPA ──
 
 | Camada | Onde | Responsabilidade |
 |---|---|---|
-| Domínio | `packages/dominio` | Tipos, regras puras (motor de alertas, checklist, transacional), contratos da API. Sem I/O. Compartilhado por web e api. |
-| Casos de uso | `apps/api/src/servicos` | Carteira, checklist, comitê/ata, decisão, importação. Dependem de interfaces. |
-| Repositórios | `apps/api/src/repositorios` | SQL parametrizado, colunas por lista branca, `ORDER BY` determinístico. |
-| Identidade | `apps/api/src/identidade` | Entra (OIDC+PKCE), Graph, Intranet, login, revalidação de acesso. |
-| Infra | `apps/api/src/infra` | Pool do banco, migrador, armazenamento S3/MinIO, bootstrap. |
-| HTTP | `apps/api/src/http` | Rotas, sessão, autorização por perfil, erros RFC 9457. |
-| Composição | `apps/api/src/composicao.ts` | ÚNICO ponto que instancia implementações concretas. |
+| Domínio | `backend/dominio` | Tipos, regras puras (motor de alertas, checklist, transacional), contratos da API. Sem I/O. Compartilhado por web e api. |
+| Casos de uso | `backend/api/src/servicos` | Carteira, checklist, comitê/ata, decisão, importação. Dependem de interfaces. |
+| Repositórios | `backend/api/src/repositorios` | SQL parametrizado, colunas por lista branca, `ORDER BY` determinístico. |
+| Identidade | `backend/api/src/identidade` | Entra (OIDC+PKCE), Graph, Intranet, login, revalidação de acesso. |
+| Infra | `backend/api/src/infra` | Pool do banco, migrador, armazenamento S3/MinIO, bootstrap. |
+| HTTP | `backend/api/src/http` | Rotas, sessão, autorização por perfil, erros RFC 9457. |
+| Composição | `backend/api/src/composicao.ts` | ÚNICO ponto que instancia implementações concretas. |
 
 Troca de provedor (ex.: outro S3) = nova implementação de
 `ArmazenamentoArquivos`, sem tocar em caso de uso.
@@ -128,7 +128,7 @@ Chave do objeto gerada pelo sistema: `<prefixo>/<categoria>/<aaaa>/<mm>/<id>/v<n
 
 ## Front
 
-React 19 + Vite + Tailwind 4 no padrão visual da Intranet (fundo azul-marinho
+React 19 + Vite + Tailwind 4 na identidade visual Everblue (fundo azul-marinho
 em degradê, menu de 240 px, violeta `#7C3AED` para ações, dourado `#DFBF7D` de
 acento, DM Sans / Plus Jakarta Sans / JetBrains Mono servidas localmente).
-Toda cor passa por variáveis CSS (`apps/web/src/index.css`).
+Toda cor passa por variáveis CSS (`frontend/src/index.css`).

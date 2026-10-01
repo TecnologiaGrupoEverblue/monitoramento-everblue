@@ -39,7 +39,7 @@ describe('leitura e validação da planilha', () => {
     expect(r.comErro[0].erros[0]).toMatch(/repetido/)
   })
   it('lê a planilha modelo oficial (.xlsx)', async () => {
-    const conteudo = readFileSync(new URL('../../web/public/modelos/modelo_importacao_semanal.xlsx', import.meta.url))
+    const conteudo = readFileSync(new URL('../../../frontend/public/modelos/modelo_importacao_semanal.xlsx', import.meta.url))
     expect(detectarFormato(conteudo)).toBe('xlsx')
     const r = validarLinhasPlanilha(await lerLinhasPlanilha(conteudo, 'xlsx'))
     expect(r.colunasFaltando).toEqual([])

@@ -5,23 +5,20 @@ importação semanal da posição, alertas automáticos, checklist de análise,
 decisões e planos de ação, atas, saída de risco, jurídico e IASR.
 
 Padrão de desenvolvimento Everblue: **React · Node · PostgreSQL · MinIO**, tudo
-em Docker. Visual da **Intranet**; login **idêntico ao da IA Everblue** (Entra
+em Docker. Identidade visual Everblue; login **idêntico ao da IA Everblue** (Entra
 ID + autorização na Intranet por chamada interna assinada — HMAC, como a IA).
 
 ## Estrutura
 
 ```text
 everblue-monitoramento/
-├── apps/
-│   ├── web/          React 19 + Vite + Tailwind 4 (visual da Intranet)
-│   └── api/          Node 22 + Fastify 5 + TypeScript (API, login, CLI)
-├── packages/
-│   └── dominio/      Tipos, regras puras e contratos — compartilhados por web e api
-├── database/
-│   ├── init/         Criação do papel da aplicação (primeira subida do volume)
-│   └── migrations/   Esquema do PostgreSQL (migrações versionadas e com checksum)
-├── infrastructure/   compose.yaml, Dockerfiles, nginx, MinIO e roteiros operacionais
-└── docs/             Arquitetura, rede e Entra ID, operação
+├── frontend/         Aplicação web React 19 + Vite + Tailwind 4: telas e componentes
+├── backend/          Regras de negócio, integrações, segurança, jobs e testes
+│   ├── api/          Node 22 + Fastify 5 + TypeScript: API REST, autenticação e CLI
+│   └── dominio/      Tipos, regras puras e contratos — compartilhados por frontend e api
+├── database/         Esquema PostgreSQL: migrações versionadas e criação do papel da aplicação
+├── infrastructure/   Docker Compose, imagens, nginx, MinIO e roteiros operacionais
+└── docs/             Arquitetura, rede e Entra ID, instalação e operação
 ```
 
 | Serviço      | Papel                                                            | Memória |

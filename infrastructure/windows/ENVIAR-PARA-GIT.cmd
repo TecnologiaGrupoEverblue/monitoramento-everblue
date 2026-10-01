@@ -46,12 +46,52 @@ $candidatas = @(
 ) | Where-Object { $_ }
 $Repo = $null
 foreach ($c in $candidatas) {
-  if ((Test-Path (Join-Path $c 'VERSAO')) -and (Test-Path (Join-Path $c 'apps')) -and (Test-Path (Join-Path $c 'infrastructure'))) {
+  if ((Test-Path (Join-Path $c 'VERSAO')) -and (Test-Path (Join-Path $c 'database')) -and (Test-Path (Join-Path $c 'infrastructure'))) {
     $Repo = (Resolve-Path $c).Path; break
   }
 }
-if (-not $Repo) { Falha 'Nao encontrei a pasta everblue-monitoramento (com VERSAO, apps e infrastructure).' }
+if (-not $Repo) { Falha 'Nao encontrei a pasta everblue-monitoramento (com VERSAO, database e infrastructure).' }
 $Versao = ((Get-Content (Join-Path $Repo 'VERSAO') -Raw).Trim() -split '\s+')[0]
+# Estrutura padrao Everblue (igual a ia-everblue e a intranet-everblue):
+# frontend/ backend/ database/ infrastructure/ docs/. Sobra da estrutura antiga
+# nao pode subir junto.
+$antigas = @('apps', 'packages') | Where-Object { Test-Path (Join-Path $Repo $_) }
+if ($antigas) {
+  $novaPronta = (Test-Path (Join-Path $Repo 'frontend/package.json')) -and (Test-Path (Join-Path $Repo 'backend/api/package.json')) -and (Test-Path (Join-Path $Repo 'backend/dominio/package.json'))
+  if (-not $novaPronta) {
+    Write-Host "`n  A pasta ainda esta na estrutura ANTIGA (apps e packages) e as pastas novas nao existem. Nada foi enviado." -ForegroundColor Yellow
+    Falha 'Faltam frontend\, backend\api\ e backend\dominio\. Avise o suporte antes de continuar.'
+  }
+  # A estrutura nova ja existe: confere arquivo por arquivo que o conteudo
+  # antigo esta inteiro na nova antes de oferecer a limpeza.
+  Passo 'Estrutura antiga encontrada (apps e packages) - conferindo antes de limpar'
+  $mapa = @{ 'apps/web' = 'frontend'; 'apps/api' = 'backend/api'; 'packages/dominio' = 'backend/dominio' }
+  $faltando = @(); $total = 0
+  foreach ($de in $mapa.Keys) {
+    $origem = Join-Path $Repo $de
+    if (-not (Test-Path $origem)) { continue }
+    Get-ChildItem -LiteralPath $origem -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/](node_modules|dist)[\\/]' } | ForEach-Object {
+      $total++
+      $rel = $_.FullName.Substring($origem.Length).TrimStart([char]92, [char]47)
+      $alvo = Join-Path (Join-Path $Repo $mapa[$de]) $rel
+      if (-not (Test-Path -LiteralPath $alvo)) { $faltando += "$de/$rel" }
+    }
+  }
+  $soltos = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'apps'), (Join-Path $Repo 'packages') -ErrorAction SilentlyContinue | Where-Object { $_.Name -notin @('web', 'api', 'dominio') })
+  if ($faltando.Count -gt 0 -or $soltos.Count -gt 0) {
+    Write-Host "`n  Itens das pastas antigas que NAO estao na estrutura nova:" -ForegroundColor Red
+    $faltando + ($soltos | ForEach-Object { $_.FullName.Substring($Repo.Length + 1) }) | Select-Object -First 30 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    Falha 'Nada foi apagado nem enviado. Me envie esta tela.'
+  }
+  Ok "$total arquivo(s) das pastas antigas conferidos: todos estao em frontend\ e backend\"
+  if ($env:EMON_GIT_MENSAGEM) { $r = 's' } else { $r = Read-Host "  Apagar as pastas antigas apps e packages desta pasta? (o .git e o resto ficam) [S/n]" }
+  if ($r -and $r.Trim().ToLower() -notin @('s', 'sim', 'y')) { Falha 'Cancelado. Nada foi apagado nem enviado.' }
+  foreach ($a in $antigas) { Remove-Item -LiteralPath (Join-Path $Repo $a) -Recurse -Force }
+  Ok 'pastas antigas apagadas'
+}
+foreach ($p in @('frontend', 'backend/api', 'backend/dominio')) {
+  if (-not (Test-Path (Join-Path $Repo $p))) { Falha "Falta a pasta $p. Confira a reorganizacao (frontend, backend\api, backend\dominio)." }
+}
 
 Write-Host ''
 Write-Host '  Monitoramento Everblue - enviar para o Git' -ForegroundColor White

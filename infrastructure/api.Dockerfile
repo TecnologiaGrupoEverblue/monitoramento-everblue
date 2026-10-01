@@ -12,12 +12,12 @@ ENV CI=true NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
 
 # Manifestos primeiro: a camada do `npm ci` só é refeita quando mudam.
 COPY package.json package-lock.json tsconfig.base.json ./
-COPY packages/dominio/package.json packages/dominio/
-COPY apps/api/package.json apps/api/
+COPY backend/dominio/package.json backend/dominio/
+COPY backend/api/package.json backend/api/
 RUN npm ci -w @monitoramento/api -w @monitoramento/dominio --include-workspace-root
 
-COPY packages/dominio packages/dominio
-COPY apps/api apps/api
+COPY backend/dominio backend/dominio
+COPY backend/api backend/api
 RUN npm run typecheck -w @monitoramento/api \
  && npm run build -w @monitoramento/api
 
@@ -26,8 +26,8 @@ FROM ${NODE_IMAGEM} AS dependencias
 WORKDIR /repo
 ENV CI=true NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false
 COPY package.json package-lock.json ./
-COPY packages/dominio/package.json packages/dominio/
-COPY apps/api/package.json apps/api/
+COPY backend/dominio/package.json backend/dominio/
+COPY backend/api/package.json backend/api/
 RUN npm ci --omit=dev -w @monitoramento/api \
  && npm cache clean --force
 
@@ -39,8 +39,8 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 COPY --from=dependencias /repo/node_modules ./node_modules
-COPY --from=build /repo/apps/api/dist ./dist
-COPY apps/api/package.json ./package.json
+COPY --from=build /repo/backend/api/dist ./dist
+COPY backend/api/package.json ./package.json
 COPY database/migrations ./database/migrations
 
 # Usuário sem privilégio e sem shell de login. O sistema de arquivos do

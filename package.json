@@ -1,11 +1,12 @@
 {
   "name": "everblue-monitoramento",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "EverBlue Monitoramento — gestão semanal do Comitê de Monitoramento do FIDC.",
   "workspaces": [
-    "packages/*",
-    "apps/*"
+    "backend/dominio",
+    "backend/api",
+    "frontend"
   ],
   "engines": {
     "node": ">=22.12"
