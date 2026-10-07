@@ -1,5 +1,6 @@
 import type { ConfiguracaoAlerta, Gravidade, PlanoAcao, SnapshotSemanal } from '../models/types'
-import { formatarData } from '../utils/formatters'
+import { formatarData, formatarMoeda } from '../utils/formatters'
+import { compararRestritivos, descreverVariacao, type LinhaRestritivo } from './restritivos'
 
 /**
  * Motor de alertas — as regras comparam o snapshot atual com o anterior e
@@ -71,6 +72,9 @@ export function avaliarAlertasSnapshot(
   atual: SnapshotSemanal,
   anterior: SnapshotSemanal | null,
   configs: ConfiguracaoAlerta[],
+  /** Restritivos por tipo da semana e da anterior: quando existem, o alerta
+   * de restritivos compara tipo a tipo (quantidade e valor). */
+  restritivos?: { atual: LinhaRestritivo[] | null; anterior: LinhaRestritivo[] | null },
 ): AlertaGerado[] {
   const alertas: AlertaGerado[] = []
 
@@ -95,7 +99,8 @@ export function avaliarAlertasSnapshot(
     }
 
     const cfgLiquidez = configAtiva(configs, 'QUEDA_LIQUIDEZ')
-    if (cfgLiquidez) {
+    // Sem base em uma das semanas não é queda: é ausência de dado.
+    if (cfgLiquidez && atual.il30 !== null && anterior.il30 !== null && atual.il30 !== undefined && anterior.il30 !== undefined) {
       const quedaIl30 = anterior.il30 - atual.il30
       if (quedaIl30 >= cfgLiquidez.limiar) {
         alertas.push({ tipo: cfgLiquidez.descricao, gravidade: gravidadePorDesvio(cfgLiquidez, quedaIl30), descricao: `IL 30 dias caiu ${quedaIl30.toFixed(1)} p.p.` })
@@ -123,29 +128,34 @@ export function avaliarAlertasSnapshot(
     }
 
     const cfgRestritivos = configAtiva(configs, 'ALTERACAO_RESTRITIVOS')
-    if (cfgRestritivos && atual.restritivos > anterior.restritivos) {
+    if (cfgRestritivos && restritivos?.atual && restritivos.anterior) {
+      const pioras = compararRestritivos(restritivos.atual, restritivos.anterior).filter((v) => v.piorou)
+      if (pioras.length > 0) {
+        alertas.push({ tipo: cfgRestritivos.descricao, gravidade: cfgRestritivos.gravidadeSugerida, descricao: `Piora de restritivos: ${pioras.map(descreverVariacao).join('; ')}` })
+      }
+    } else if (cfgRestritivos && atual.restritivos > anterior.restritivos) {
       alertas.push({ tipo: cfgRestritivos.descricao, gravidade: cfgRestritivos.gravidadeSugerida, descricao: `Novo(s) restritivo(s) identificado(s): ${atual.restritivos - anterior.restritivos}` })
     }
 
     const cfgRecompra = configAtiva(configs, 'RECOMPRAS_RELEVANTES')
     if (cfgRecompra && atual.recompras >= cfgRecompra.limiar) {
-      alertas.push({ tipo: cfgRecompra.descricao, gravidade: gravidadePorDesvio(cfgRecompra, atual.recompras), descricao: `Recompras de R$ ${atual.recompras.toLocaleString('pt-BR')} na semana` })
+      alertas.push({ tipo: cfgRecompra.descricao, gravidade: gravidadePorDesvio(cfgRecompra, atual.recompras), descricao: `Recompras de ${formatarMoeda(atual.recompras)} na semana` })
     }
   }
 
   const cfgLastro = configAtiva(configs, 'PROBLEMAS_LASTRO')
   if (cfgLastro && atual.manifestoLastroInconsistente >= cfgLastro.limiar) {
-    alertas.push({ tipo: cfgLastro.descricao, gravidade: gravidadePorDesvio(cfgLastro, atual.manifestoLastroInconsistente), descricao: `Lastro inconsistente de R$ ${atual.manifestoLastroInconsistente.toLocaleString('pt-BR')}` })
+    alertas.push({ tipo: cfgLastro.descricao, gravidade: gravidadePorDesvio(cfgLastro, atual.manifestoLastroInconsistente), descricao: `Lastro inconsistente de ${formatarMoeda(atual.manifestoLastroInconsistente)}` })
   }
 
   const cfgLimite = configAtiva(configs, 'CONSUMO_LIMITE')
   if (cfgLimite && atual.percConsumoLimite >= cfgLimite.limiar) {
-    alertas.push({ tipo: cfgLimite.descricao, gravidade: gravidadePorDesvio(cfgLimite, atual.percConsumoLimite), descricao: `Consumo do limite em ${atual.percConsumoLimite.toFixed(1)}%` })
+    alertas.push({ tipo: cfgLimite.descricao, gravidade: gravidadePorDesvio(cfgLimite, atual.percConsumoLimite), descricao: atual.percConsumoLimite > 1000 ? 'Consumo do limite acima de 1.000% (limite simbólico?)' : `Consumo do limite em ${atual.percConsumoLimite.toFixed(1)}%` })
   }
 
   const cfgTranche = configAtiva(configs, 'TRANCHE_EXCEDIDA')
   if (cfgTranche && atual.statusTranche === 'EXCEDIDA') {
-    alertas.push({ tipo: cfgTranche.descricao, gravidade: cfgTranche.gravidadeSugerida, descricao: `Tranche excedida (${atual.percConsumoTranche.toFixed(1)}% consumida)` })
+    alertas.push({ tipo: cfgTranche.descricao, gravidade: cfgTranche.gravidadeSugerida, descricao: atual.percConsumoTranche > 1000 ? 'Tranche excedida (acima de 1.000%)' : `Tranche excedida (${atual.percConsumoTranche.toFixed(1)}% consumida)` })
   }
 
   const cfgProposta = configAtiva(configs, 'PROPOSTA_VENCIDA')

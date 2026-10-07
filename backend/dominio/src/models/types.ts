@@ -19,7 +19,7 @@ export type StatusAlerta = 'ABERTO' | 'EM_TRATATIVA' | 'RESOLVIDO'
 
 export type StatusPlano = 'EM_DIA' | 'ATRASADO' | 'CONCLUIDO'
 
-export type StatusProposta = 'EM_ANALISE' | 'APROVADA' | 'VENCIDA' | 'REPROVADA'
+export type StatusProposta = 'EM_ANALISE' | 'APROVADA' | 'VENCIDA' | 'REPROVADA' | 'SEM_PROPOSTA'
 
 export type StatusTranche = 'DENTRO_DO_LIMITE' | 'PROXIMA_DO_LIMITE' | 'EXCEDIDA'
 
@@ -30,6 +30,8 @@ export type TipoEvento =
   | 'ALERTA'
   | 'IMPORTACAO'
   | 'OUTRO'
+  | 'MUDANCA_CRITICIDADE'
+  | 'RESTRITIVOS'
 
 export interface GrupoEconomico {
   id: string
@@ -47,6 +49,20 @@ export interface Plataforma {
   nome: string
 }
 
+/** Universo de análise. Carteira apartada (ex.: QUATTUOR) é acompanhada, mas
+ * fica fora dos indicadores da carteira Everblue, salvo filtro explícito. */
+export interface Carteira {
+  id: string
+  nome: string
+  apartada: boolean
+}
+
+/** CNPJs/CPFs de um cliente. O principal é o de `Cliente.cnpj`. */
+export interface DocumentoCliente {
+  documento: string
+  principal: boolean
+}
+
 export interface Cliente {
   id: string
   nome: string
@@ -54,6 +70,8 @@ export interface Cliente {
   grupoEconomicoId: string
   gerenteId: string
   plataformaId: string
+  /** Carteira do cliente; ausente em dados anteriores à versão 1.1 = EVERBLUE. */
+  carteiraId?: string
   setor: string
   ramoAtividade: string
   produtos: string[]
@@ -89,13 +107,15 @@ export interface SnapshotSemanal {
   agingCarteiraDias: number
   prazoMedioCarteiraDias: number
 
-  // Liquidez (IL = índice de liquidez, % da carteira liquidada dentro do prazo)
-  il30: number
-  il60: number
-  il90: number
-  il120: number
-  il150: number
-  il180: number
+  // Liquidez (IL = índice de liquidez, % da carteira liquidada dentro do prazo).
+  // `null` = janela sem base (sem título vencendo no período) — ausência de
+  // dado, nunca liquidez zero.
+  il30: number | null
+  il60: number | null
+  il90: number | null
+  il120: number | null
+  il150: number | null
+  il180: number | null
 
   // Manifestos / qualidade do recebível (R$)
   manifestoPercSemAtuacao: number
@@ -111,6 +131,12 @@ export interface SnapshotSemanal {
   motivoRecompra: string | null
   percLiquidadoNoPrazo: number
   atrasoMedioDias: number
+
+  /** Prorrogações acima de 60 dias (R$); `null` quando a importação não trouxe. */
+  prorrogacoesAcima60d?: number | null
+  /** Volume operado no mês anterior e no mês da posição (R$), quando informado. */
+  operacoesMesAnterior?: number | null
+  operacoesMes?: number | null
 
   // Restritivos
   restritivos: number
@@ -156,6 +182,9 @@ export interface PlanoAcao {
   status: StatusPlano
   dataLimite: string
   evidencias: string[]
+  concluidoEm?: string | null
+  atualizadoEm?: string | null
+  atualizadoPor?: string | null
 }
 
 /** Dados específicos de quando um cliente está em Saída de Risco. */
@@ -245,6 +274,16 @@ export interface AtaClienteDiscutido {
   planoAcaoId: string | null
   responsavel: string
   prazo: string
+  /** Campos do comitê (versão 1.1+): parecer registrado no checklist da semana
+   * do comitê e classificação calculada. Atas antigas não os têm. */
+  plano?: string
+  situacaoAtual?: string | null
+  pracaPagamento?: string | null
+  evolucaoRestritivos?: string | null
+  consideracoesTransacional?: string | null
+  criticidadeCalculada?: string | null
+  enquadramento?: string | null
+  dataDecisaoAnterior?: string | null
 }
 
 export interface AtaPendencia {
@@ -302,6 +341,7 @@ export type ChaveItemChecklist =
   | 'EVENTOS'
   | 'DADOS_TRANSACIONAIS_CONTA_MOVIMENTO'
   | 'PARECER_JURIDICO'
+  | 'SITUACAO_ATUAL'
 
 /** Registro persistido de um item do checklist para um cliente numa semana
  * (só existe depois que o executivo salva; até lá, a tela mostra a sugestão
@@ -362,6 +402,7 @@ export interface FiltrosGlobais {
   gerenteId: string | null
   clienteId: string | null
   grupoEconomicoId: string | null
+  carteiraId: string | null
   status: StatusCliente | null
   prioridade: Prioridade | null
   setor: string | null

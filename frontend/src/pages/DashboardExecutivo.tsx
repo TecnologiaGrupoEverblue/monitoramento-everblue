@@ -3,11 +3,13 @@ import GraficoBarrasDimensao, { type ItemDimensao } from '../components/charts/G
 import GraficoEntradasSaidas from '../components/charts/GraficoEntradasSaidas'
 import GraficoLinhaSerie from '../components/charts/GraficoLinhaSerie'
 import GraficoPizza from '../components/charts/GraficoPizza'
+import PainelDiretoria from '../components/PainelDiretoria'
 import { KpiCard, NumeroHero, Painel } from '../components/ui/Card'
 import { useDrillDown } from '../contexts/DrillDownContext'
 import { useFiltros } from '../contexts/FiltrosContext'
 import { criticidadeCor } from '../theme/colors'
 import { dashboardRepository, type KPIsDashboard } from '../repositories'
+import type { PainelSemanal } from '../models/types'
 import { formatarData, formatarMoeda, formatarPercentual, formatarVariacao } from '../utils/formatters'
 
 type Dimensao = 'status' | 'gerenteId' | 'plataformaId' | 'setor' | 'grupoEconomicoId' | 'produto'
@@ -27,6 +29,7 @@ export default function DashboardExecutivo() {
   const [porCriticidade, setPorCriticidade] = useState<{ criticidade: string; qtd: number; clienteIds: string[] }[]>([])
   const [entradasSaidas, setEntradasSaidas] = useState<{ semana: string; entradas: number; saidas: number }[]>([])
   const [carregando, setCarregando] = useState(true)
+  const [painel, setPainel] = useState<PainelSemanal | null>(null)
 
   useEffect(() => {
     if (carregandoFiltros) return
@@ -43,8 +46,10 @@ export default function DashboardExecutivo() {
       dashboardRepository.riscoPorDimensao(filtros, 'grupoEconomicoId'),
       dashboardRepository.clientesPorCriticidade(filtros),
       dashboardRepository.evolucaoEntradasSaidasMonitoramento(filtros),
-    ]).then(([k, serie, status, gerente, plataforma, produto, setor, grupo, criticidade, entSai]) => {
+      dashboardRepository.painelSemanal(filtros),
+    ]).then(([k, serie, status, gerente, plataforma, produto, setor, grupo, criticidade, entSai, painelSemanal]) => {
       if (!ativo) return
+      setPainel(painelSemanal)
       setKpis(k)
       setSerieRisco(serie)
       setPorStatus(status)
@@ -144,8 +149,18 @@ export default function DashboardExecutivo() {
           <KpiCard titulo="Limite global" valor={formatarMoeda(atual.limiteGlobal)} formatoVariacao="numero" />
           <KpiCard titulo="Limite consumido" valor={formatarPercentual(atual.percLimiteConsumido)} formatoVariacao="numero" destaque={atual.percLimiteConsumido >= 90 ? 'critico' : 'normal'} />
           <KpiCard titulo="Tranche consumida" valor={formatarPercentual(atual.percTrancheConsumida)} formatoVariacao="numero" destaque={atual.percTrancheConsumida >= 90 ? 'critico' : 'normal'} />
+          {atual.qtdApartados > 0 && (
+            <KpiCard
+              titulo={`Carteira apartada (${atual.qtdApartados}) — fora dos totais`}
+              valor={formatarMoeda(atual.riscoApartado)}
+              valorAnterior={{ atual: atual.riscoApartado, anterior: anterior.riscoApartado }}
+            />
+          )}
+          {atual.qtdApartados > 0 && <KpiCard titulo="Vencido da carteira apartada" valor={formatarMoeda(atual.vencidoApartado)} formatoVariacao="numero" />}
         </div>
       </div>
+
+      {painel && <PainelDiretoria painel={painel} />}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Painel titulo="Evolução semanal do risco — clique num ponto para ver os clientes">

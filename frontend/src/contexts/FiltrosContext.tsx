@@ -1,11 +1,12 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { Cliente, FiltrosGlobais, Gerente, GrupoEconomico, Plataforma } from '../models/types'
+import type { Carteira, Cliente, FiltrosGlobais, Gerente, GrupoEconomico, Plataforma } from '../models/types'
 import { cadastrosRepository, clienteRepository, FILTROS_VAZIOS, snapshotRepository } from '../repositories'
 
 interface OpcoesFiltro {
   gerentes: Gerente[]
   plataformas: Plataforma[]
   grupos: GrupoEconomico[]
+  carteiras: Carteira[]
   setores: string[]
   ramos: string[]
   produtos: string[]
@@ -28,7 +29,7 @@ const FiltrosContext = createContext<FiltrosContextValue | null>(null)
 
 export function FiltrosProvider({ children }: { children: ReactNode }) {
   const [filtros, setFiltros] = useState<FiltrosGlobais>(FILTROS_VAZIOS)
-  const [opcoes, setOpcoes] = useState<OpcoesFiltro>({ gerentes: [], plataformas: [], grupos: [], setores: [], ramos: [], produtos: [], semanas: [], clientes: [] })
+  const [opcoes, setOpcoes] = useState<OpcoesFiltro>({ gerentes: [], plataformas: [], grupos: [], carteiras: [], setores: [], ramos: [], produtos: [], semanas: [], clientes: [] })
   const [carregando, setCarregando] = useState(true)
   const [versaoDados, setVersaoDados] = useState(0)
 
@@ -42,9 +43,10 @@ export function FiltrosProvider({ children }: { children: ReactNode }) {
       clienteRepository.valoresDistintos(),
       snapshotRepository.listarSemanasDisponiveis(),
       clienteRepository.listarTodos(),
-    ]).then(([gerentes, plataformas, grupos, distintos, semanas, clientes]) => {
+      cadastrosRepository.listarCarteiras(),
+    ]).then(([gerentes, plataformas, grupos, distintos, semanas, clientes, carteiras]) => {
       if (!ativo) return
-      setOpcoes({ gerentes, plataformas, grupos, setores: distintos.setores, ramos: distintos.ramos, produtos: distintos.produtos, semanas, clientes })
+      setOpcoes({ gerentes, plataformas, grupos, carteiras, setores: distintos.setores, ramos: distintos.ramos, produtos: distintos.produtos, semanas, clientes })
       setFiltros((atual) => (atual.semanaRef ? atual : { ...atual, semanaRef: semanas[semanas.length - 1] ?? null }))
       setCarregando(false)
     })

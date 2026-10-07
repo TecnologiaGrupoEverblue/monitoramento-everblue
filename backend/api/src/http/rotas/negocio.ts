@@ -3,7 +3,7 @@
  * decisões, checklist e importação exigem `analista`; configuração exige
  * `admin`. Toda entrada é validada por esquema antes de chegar ao caso de uso.
  */
-import { ITENS_CHECKLIST, DIMENSOES_RISCO, type FiltrosGlobais } from '@monitoramento/dominio'
+import { ITENS_CHECKLIST, DIMENSOES_RISCO, REGRAS_CLASSIFICACAO_PADRAO, TIPOS_RESTRITIVO, validarNovoLimiar, type ChaveRegra, type FiltrosGlobais } from '@monitoramento/dominio'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { Dependencias } from '../../composicao'
@@ -20,6 +20,7 @@ const esquemaFiltros = z.object({
   gerenteId: id.optional(),
   clienteId: id.optional(),
   grupoEconomicoId: id.optional(),
+  carteiraId: id.optional(),
   status: z.enum(['NORMAL', 'MONITORAMENTO', 'SAIDA_DE_RISCO', 'JURIDICO']).optional(),
   prioridade: z.enum(['BAIXA', 'MEDIA', 'ALTA']).optional(),
   setor: textoCurto.optional(),
@@ -44,11 +45,29 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   app.get('/api/v1/cadastros/grupos', leitor, () => repos.cadastros.listarGrupos())
   app.get('/api/v1/cadastros/gerentes', leitor, () => repos.cadastros.listarGerentes())
   app.get('/api/v1/cadastros/plataformas', leitor, () => repos.cadastros.listarPlataformas())
+  app.get('/api/v1/cadastros/carteiras', leitor, () => repos.cadastros.listarCarteiras())
+  app.patch('/api/v1/cadastros/carteiras/:carteiraId', admin, async (request, reply) => {
+    const { carteiraId } = z.object({ carteiraId: id }).parse(request.params)
+    const { apartada, motivo } = z.object({ apartada: z.boolean(), motivo: textoCurto.optional() }).strict().parse(request.body)
+    const anterior = (await repos.cadastros.listarCarteiras()).find((c) => c.id === carteiraId)
+    if (!anterior || !(await repos.cadastros.definirCarteiraApartada(carteiraId, apartada))) throw new ErroHttp(404, 'Carteira não encontrada.', 'nao_encontrado')
+    await repos.auditoria.registrar({
+      acao: 'cadastro.carteira',
+      atorId: request.ator!.id,
+      atorEmail: request.ator!.email,
+      recursoTipo: 'carteira',
+      recursoId: carteiraId,
+      motivo,
+      detalhes: { campo: 'apartada', anterior: anterior.apartada, novo: apartada },
+    })
+    return reply.status(204).send()
+  })
 
   // ------------------------------------------------------------ clientes
   app.get('/api/v1/clientes', leitor, (request) => repos.clientes.listar(filtrosDe(request.query)))
   app.get('/api/v1/clientes/enriquecidos', leitor, (request) => servicos.carteira.listarEnriquecidos(filtrosDe(request.query)))
   app.get('/api/v1/clientes/valores-distintos', leitor, () => repos.clientes.valoresDistintos())
+  app.get('/api/v1/clientes/:clienteId/documentos', leitor, (request) => repos.clientes.documentos(paramCliente.parse(request.params).clienteId))
   app.get('/api/v1/clientes/:clienteId', leitor, async (request) => {
     const { clienteId } = paramCliente.parse(request.params)
     const cliente = await repos.clientes.porId(clienteId)
@@ -74,6 +93,50 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   app.get('/api/v1/eventos/cliente/:clienteId', leitor, (request) => repos.eventos.porCliente(paramCliente.parse(request.params).clienteId))
   app.get('/api/v1/planos', leitor, () => repos.planos.listarTodos())
   app.get('/api/v1/planos/cliente/:clienteId', leitor, (request) => repos.planos.porCliente(paramCliente.parse(request.params).clienteId))
+  app.patch('/api/v1/planos/:planoId', analista, (request) => {
+    const { planoId } = z.object({ planoId: id }).parse(request.params)
+    const corpo = z
+      .object({
+        oQueFoiFeito: z.string().trim().max(4000).nullable().optional(),
+        oQueNaoFoiFeito: z.string().trim().max(4000).nullable().optional(),
+        concluir: z.boolean().optional(),
+        reabrir: z.boolean().optional(),
+        dataLimite: data.optional(),
+        responsavel: z.string().trim().min(1).max(200).optional(),
+        justificativa: z.string().trim().max(1000).optional(),
+      })
+      .strict()
+      .parse(request.body)
+    return servicos.planos.registrarAndamento(planoId, corpo, request.ator!)
+  })
+
+  // ------------------------------------------------------------ restritivos e classificação
+  const tiposRestritivo = TIPOS_RESTRITIVO.map((t) => t.tipo) as [string, ...string[]]
+  app.get('/api/v1/restritivos/cliente/:clienteId', leitor, (request) => repos.restritivos.porCliente(paramCliente.parse(request.params).clienteId))
+  app.put('/api/v1/restritivos/:clienteId/:semanaRef', analista, (request) => {
+    const p = z.object({ clienteId: id, semanaRef: data }).parse(request.params)
+    const { linhas } = z
+      .object({
+        linhas: z
+          .array(
+            z.object({
+              tipo: z.enum(tiposRestritivo),
+              quantidade: z.number().int().min(0).max(1_000_000),
+              valor: z.number().finite().min(0).max(1e13),
+              observacao: z.string().trim().max(500).nullable().optional(),
+            }),
+          )
+          .max(tiposRestritivo.length),
+      })
+      .strict()
+      .parse(request.body)
+    return servicos.restritivos.gravar(p.clienteId, p.semanaRef, linhas as never, request.ator!)
+  })
+  app.get('/api/v1/classificacoes/cliente/:clienteId', leitor, (request) => repos.classificacoes.porCliente(paramCliente.parse(request.params).clienteId))
+  app.get('/api/v1/classificacoes/semana/:semanaRef', leitor, async (request) => {
+    const { semanaRef } = z.object({ semanaRef: data }).parse(request.params)
+    return Object.fromEntries(await repos.classificacoes.porSemana(semanaRef))
+  })
 
   // ------------------------------------------------------------ carteira
   app.get('/api/v1/saidas-de-risco', leitor, () => repos.carteira.saidasDeRisco())
@@ -87,6 +150,7 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   // ------------------------------------------------------------ dashboard
   app.get('/api/v1/dashboard/kpis', leitor, (request) => servicos.carteira.obterKPIs(filtrosDe(request.query)))
   app.get('/api/v1/dashboard/serie-semanal', leitor, (request) => servicos.carteira.serieEvolucaoSemanal(filtrosDe(request.query)))
+  app.get('/api/v1/dashboard/painel-semanal', leitor, (request) => servicos.carteira.painelSemanal(filtrosDe(request.query)))
   app.get('/api/v1/dashboard/criticidade', leitor, (request) => servicos.carteira.clientesPorCriticidade(filtrosDe(request.query)))
   app.get('/api/v1/dashboard/entradas-saidas', leitor, (request) => servicos.carteira.evolucaoEntradasSaidasMonitoramento(filtrosDe(request.query)))
   app.get('/api/v1/dashboard/risco-por-dimensao', leitor, (request) => {
@@ -114,19 +178,21 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
         gravidade: z.enum(['VERDE', 'AMARELO', 'VERMELHO']).optional(),
         gravidadeManual: z.boolean().optional(),
       })
+      .strict()
       .parse(request.body)
     if (!(await repos.clientes.porId(p.clienteId))) throw new ErroHttp(404, 'Cliente não encontrado.', 'nao_encontrado')
     await servicos.checklist.salvarItem(p.clienteId, p.semanaRef, p.item as (typeof ITENS_CHECKLIST)[number]['chave'], corpo, request.ator!.nome)
     return reply.status(204).send()
   })
   app.post('/api/v1/checklist/resumos', leitor, (request) => {
-    const corpo = z.object({ semanaRef: data, clienteIds: z.array(id).max(300) }).parse(request.body)
+    const corpo = z.object({ semanaRef: data, clienteIds: z.array(id).max(300) }).strict().parse(request.body)
     return servicos.checklist.resumos(corpo.clienteIds, corpo.semanaRef)
   })
 
   // ------------------------------------------------------------ comitês e atas
   app.get('/api/v1/comites', leitor, () => repos.comites.listar())
   app.get('/api/v1/comites/proximo', leitor, () => servicos.comite.garantirProximoPlanejado())
+  app.get('/api/v1/comites/proximo/pauta', leitor, () => servicos.comite.pauta())
   app.get('/api/v1/comites/ultima-ata', leitor, async () => (await repos.comites.ultimaAta()) ?? null)
   app.get('/api/v1/comites/:comiteId/decisoes', leitor, async (request) => {
     const { comiteId } = z.object({ comiteId: id }).parse(request.params)
@@ -147,6 +213,7 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
         prazo: data,
         responsavel: z.string().trim().max(200).default(''),
       })
+      .strict()
       .parse(request.body)
     return servicos.decisao.registrar(corpo, request.ator!)
   })
@@ -156,16 +223,50 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   app.patch('/api/v1/configuracoes/alertas/:configId', admin, async (request, reply) => {
     const { configId } = z.object({ configId: id }).parse(request.params)
     const corpo = z
-      .object({ limiar: z.number().finite().min(0).max(1e12).optional(), ativo: z.boolean().optional() })
+      .object({ limiar: z.number().finite().min(0).max(1e12).optional(), ativo: z.boolean().optional(), motivo: textoCurto.optional() })
+      .strict()
       .refine((c) => c.limiar !== undefined || c.ativo !== undefined, 'informe limiar ou ativo')
       .parse(request.body)
-    if (!(await repos.configuracoes.atualizarAlerta(configId, corpo))) throw new ErroHttp(404, 'Configuração não encontrada.', 'nao_encontrado')
-    await repos.auditoria.registrar({ acao: 'configuracao.alerta', atorId: request.ator!.id, atorEmail: request.ator!.email, recursoTipo: 'configuracao_alerta', recursoId: configId, detalhes: corpo })
+    const { motivo, ...alteracoes } = corpo
+    const anterior = (await repos.configuracoes.listarAlertas()).find((c) => c.id === configId)
+    if (!anterior || !(await repos.configuracoes.atualizarAlerta(configId, alteracoes))) throw new ErroHttp(404, 'Configuração não encontrada.', 'nao_encontrado')
+    await repos.auditoria.registrar({
+      acao: 'configuracao.alerta',
+      atorId: request.ator!.id,
+      atorEmail: request.ator!.email,
+      recursoTipo: 'configuracao_alerta',
+      recursoId: configId,
+      motivo,
+      detalhes: { anterior: { limiar: anterior.limiar, ativo: anterior.ativo }, novo: alteracoes },
+    })
+    return reply.status(204).send()
+  })
+
+  const chavesRegra = REGRAS_CLASSIFICACAO_PADRAO.map((r) => r.chave) as [string, ...string[]]
+  app.get('/api/v1/configuracoes/regras', leitor, () => repos.classificacoes.listarRegras())
+  app.patch('/api/v1/configuracoes/regras/:chave', admin, async (request, reply) => {
+    const { chave } = z.object({ chave: z.enum(chavesRegra) }).parse(request.params)
+    const { valor, motivo } = z.object({ valor: z.number().finite().min(0).max(1e13), motivo: textoCurto.optional() }).strict().parse(request.body)
+    const problema = validarNovoLimiar(chave as ChaveRegra, valor, await repos.classificacoes.listarRegras())
+    if (problema) throw new ErroHttp(422, problema, 'limiar_invalido')
+    const anterior = await repos.classificacoes.atualizarRegra(chave, valor, request.ator!.nome)
+    if (anterior === null) throw new ErroHttp(404, 'Regra não encontrada.', 'nao_encontrado')
+    await repos.auditoria.registrar({
+      acao: 'configuracao.regra',
+      atorId: request.ator!.id,
+      atorEmail: request.ator!.email,
+      recursoTipo: 'regra_classificacao',
+      recursoId: chave,
+      motivo,
+      detalhes: { anterior, novo: valor },
+    })
     return reply.status(204).send()
   })
 
   // ------------------------------------------------------------ importação semanal
-  app.post('/api/v1/importacoes', analista, async (request) => {
+  // Importação lê planilha inteira no servidor: limite próprio, bem abaixo do global.
+  const limiteImportacao = { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }
+  app.post('/api/v1/importacoes', { ...analista, ...limiteImportacao }, async (request) => {
     const partes = request.parts()
     let semanaRef: string | null = null
     let arquivo: { nome: string; conteudo: Buffer } | null = null
@@ -186,14 +287,14 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
     const ator = request.ator!
     return servicos.importacao.receber({ nomeOriginal: arquivo.nome, conteudo: arquivo.conteudo }, semana, { id: ator.id, nome: ator.nome, email: ator.email })
   })
-  app.post('/api/v1/importacoes/:importacaoId/previa', analista, (request) => {
+  app.post('/api/v1/importacoes/:importacaoId/previa', { ...analista, ...limiteImportacao }, (request) => {
     const { importacaoId } = z.object({ importacaoId: z.string().uuid() }).parse(request.params)
-    const { semanaRef } = z.object({ semanaRef: data }).parse(request.body)
+    const { semanaRef } = z.object({ semanaRef: data }).strict().parse(request.body)
     return servicos.importacao.previa(importacaoId, semanaRef)
   })
-  app.post('/api/v1/importacoes/:importacaoId/confirmar', analista, (request) => {
+  app.post('/api/v1/importacoes/:importacaoId/confirmar', { ...analista, ...limiteImportacao }, (request) => {
     const { importacaoId } = z.object({ importacaoId: z.string().uuid() }).parse(request.params)
-    const { semanaRef } = z.object({ semanaRef: data }).parse(request.body)
+    const { semanaRef } = z.object({ semanaRef: data }).strict().parse(request.body)
     const ator = request.ator!
     return servicos.importacao.confirmar(importacaoId, semanaRef, { id: ator.id, nome: ator.nome, email: ator.email })
   })

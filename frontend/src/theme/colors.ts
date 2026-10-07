@@ -46,6 +46,20 @@ export const criticidadeCor: Record<string, { texto: string; fundo: string }> = 
   CRITICA: { texto: risco.critico, fundo: risco.criticoFundo },
 }
 
+/** Classificação semanal (regras da base do comitê). */
+export const criticidadeClassificadaCor: Record<string, { texto: string; fundo: string }> = {
+  REGULAR: { texto: risco.normal, fundo: risco.normalFundo },
+  ATENCAO: { texto: risco.atencao, fundo: risco.atencaoFundo },
+  CRITICO: { texto: risco.critico, fundo: risco.criticoFundo },
+  APARTADO: { texto: risco.inativo, fundo: risco.inativoFundo },
+}
+
+export const enquadramentoCor: Record<string, { texto: string; fundo: string }> = {
+  ENQUADRADO: { texto: risco.normal, fundo: risco.normalFundo },
+  DESENQUADRADO: { texto: risco.critico, fundo: risco.criticoFundo },
+  APARTADO: { texto: risco.inativo, fundo: risco.inativoFundo },
+}
+
 export const gravidadeCor: Record<string, { texto: string; fundo: string }> = {
   VERDE: { texto: risco.normal, fundo: risco.normalFundo },
   AMARELO: { texto: risco.atencao, fundo: risco.atencaoFundo },

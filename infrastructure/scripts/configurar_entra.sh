@@ -4,6 +4,16 @@
 # Pergunta os valores NA VM (segredo sem eco); valida; guarda cópia do .env.
 # Uso: sudo bash infrastructure/scripts/configurar_entra.sh
 set -u
+
+# Cópia do .env antes de gravar: só o dono lê (600) e ficam apenas as 3 mais
+# recentes — cada cópia carrega os segredos, e cópia esquecida é vazamento.
+guardar_copia_env() {
+  local copia=".env.bak-$(date +%Y%m%d%H%M%S)"
+  cp -p .env "$copia" && chmod 600 "$copia"
+  chmod 600 .env.bak-* 2>/dev/null || true
+  ls -1t .env.bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f --
+  printf '%s' "$copia"
+}
 APP="${APP:-/opt/everblue-monitoramento/app}"
 cd "$APP" || { echo "ERRO: $APP nao encontrado"; exit 1; }
 [ -f .env ] || { echo "ERRO: .env nao encontrado"; exit 1; }
@@ -73,7 +83,7 @@ if [ "$FALHA" = 1 ]; then
   printf '  Há falhas acima. Gravar mesmo assim? [s/N] '; read -r r; [[ "${r,,}" == s* ]] || { echo "Nada foi alterado."; exit 1; }
 fi
 
-cp -p .env ".env.bak-$(date +%Y%m%d%H%M%S)"
+COPIA="$(guardar_copia_env)"
 gravar ENTRA_TENANT_ID "$NOVO_ENTRA_TENANT_ID"
 gravar ENTRA_CLIENT_ID "$NOVO_ENTRA_CLIENT_ID"
 # `$` seria interpretado pelo Docker Compose: no .env ele vira `$$`.
@@ -81,7 +91,7 @@ SEG="${NOVO_ENTRA_CLIENT_SECRET//\$\$/\$}"   # idempotente: valor mantido já vi
 gravar ENTRA_CLIENT_SECRET "${SEG//\$/\$\$}"
 gravar ENTRA_MAPA_PERFIL "$MAPA"
 chmod 600 .env
-echo "  ok  .env atualizado (cópia anterior: $(ls -1t .env.bak-* | head -1))"
+echo "  ok  .env atualizado (cópia anterior: $COPIA; mantidas as 3 mais recentes)"
 
 echo
 echo "==> Aplicando (recria só o que mudou)"

@@ -2,10 +2,20 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSessao } from '../contexts/SessaoContext'
 import { Painel } from '../components/ui/Card'
-import { StatusPlanoBadge } from '../components/ui/Badges'
-import type { Ata, Cliente, Comite } from '../models/types'
+import { CriticidadeClassificadaBadge, StatusBadge, StatusPlanoBadge } from '../components/ui/Badges'
+import type { Ata, Cliente, Comite, MotivoPauta, PautaComite } from '../models/types'
 import { clienteRepository, comiteAtaRepository, dashboardRepository, FILTROS_VAZIOS } from '../repositories'
 import { formatarData, formatarMoeda, formatarPercentual } from '../utils/formatters'
+
+const ROTULO_MOTIVO: Record<MotivoPauta, string> = {
+  PLANO_ATRASADO: 'Plano atrasado',
+  PLANO_VENCE_ATE_COMITE: 'Plano vence até o comitê',
+  CRITICO: 'Crítico',
+  ALERTA_VERMELHO_NOVO: 'Alerta vermelho novo',
+  MUDANCA_STATUS: 'Mudança de status',
+  PIORA_RESTRITIVOS: 'Piora de restritivos',
+  JURIDICO_OU_SAIDA: 'Jurídico / Saída de Risco',
+}
 
 const ROTEIRO = [
   'Risco mensal',
@@ -41,12 +51,20 @@ export default function ComitesAtas() {
   const [resumoAtual, setResumoAtual] = useState<{ risco: number; vencido: number; percVencido: number; limiteConsumido: number; trancheConsumida: number } | null>(null)
   const [carregando, setCarregando] = useState(true)
   const [gerando, setGerando] = useState(false)
+  const [pauta, setPauta] = useState<PautaComite | null>(null)
 
   const carregar = useCallback(() => {
     setCarregando(true)
-    return Promise.all([comiteAtaRepository.ultimaAtaRealizada(), comiteAtaRepository.listarComites(), clienteRepository.listarTodos(), dashboardRepository.obterKPIs(FILTROS_VAZIOS)]).then(
-      async ([ataAnterior, listaComites, clientes, kpis]) => {
+    return Promise.all([
+      comiteAtaRepository.ultimaAtaRealizada(),
+      comiteAtaRepository.listarComites(),
+      clienteRepository.listarTodos(),
+      dashboardRepository.obterKPIs(FILTROS_VAZIOS),
+      comiteAtaRepository.pauta(),
+    ]).then(
+      async ([ataAnterior, listaComites, clientes, kpis, pautaProxima]) => {
         setAta(ataAnterior)
+        setPauta(pautaProxima)
         setComites(listaComites)
         setClientesPorId(new Map(clientes.map((c) => [c.id, c])))
         setResumoAtual({
@@ -165,6 +183,47 @@ export default function ComitesAtas() {
             </div>
           )}
 
+          {ata.clientesDiscutidos.some((cd) => cd.situacaoAtual !== undefined) && (
+            <>
+              <h4 className="mb-1.5 border-b pb-1 text-[13px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda)' }}>
+                Registro por cliente
+              </h4>
+              <div className="mb-4 flex flex-col gap-3">
+                {ata.clientesDiscutidos.map((cd) => (
+                  <div key={`det-${cd.clienteId}-${cd.planoAcaoId}`} className="ata-bloco border p-3 text-sm" style={{ borderColor: 'var(--cor-borda)' }}>
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <span className="font-semibold" style={{ color: 'var(--cor-primaria)' }}>
+                        {clientesPorId.get(cd.clienteId)?.nome ?? '—'}
+                      </span>
+                      {cd.criticidadeCalculada && <span className="text-xs">Criticidade: {cd.criticidadeCalculada}</span>}
+                      {cd.enquadramento && <span className="text-xs">· {cd.enquadramento}</span>}
+                      <span className="text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
+                        · Risco {formatarMoeda(cd.riscoTomado)} · Vencido {formatarMoeda(cd.valorVencido)} ({formatarPercentual(cd.percVencido)}) · {cd.evolucaoDesdeUltimoComite}
+                      </span>
+                    </div>
+                    {cd.principaisAlertas.length > 0 && (
+                      <p className="mb-1 text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
+                        Alertas: {cd.principaisAlertas.join(' | ')}
+                      </p>
+                    )}
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+                      <ItemAta rotulo="Status atual" valor={cd.situacaoAtual} />
+                      <ItemAta rotulo="Evolução do quadro restritivo" valor={cd.evolucaoRestritivos} />
+                      <ItemAta rotulo="Praça de pagamento" valor={cd.pracaPagamento} />
+                      <ItemAta rotulo="Considerações sobre o transacional" valor={cd.consideracoesTransacional} />
+                      <ItemAta rotulo={`Decisão do comitê anterior${cd.dataDecisaoAnterior ? ` (${formatarData(cd.dataDecisaoAnterior)})` : ''}`} valor={cd.decisaoAnterior} />
+                      <ItemAta rotulo={`Decisão do comitê atual (${formatarData(ata.dataComite)})`} valor={cd.novaDecisao} />
+                      <ItemAta rotulo="Plano de ação" valor={cd.plano} />
+                      <ItemAta rotulo="Responsável por fazer acontecer · prazo" valor={`${cd.responsavel} · ${formatarData(cd.prazo)}`} />
+                      <ItemAta rotulo="O que foi feito" valor={cd.oQueFoiRealizado} />
+                      <ItemAta rotulo="O que não foi feito" valor={cd.oQueNaoFoiRealizado} />
+                    </dl>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           <h4 className="mb-1.5 border-b pb-1 text-[13px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda)' }}>
             Pendências do comitê
           </h4>
@@ -224,6 +283,46 @@ export default function ComitesAtas() {
             </button>
           }
         >
+          {pauta && (
+            <div className="mb-4">
+              <h4 className="mb-1.5 border-b pb-1 text-[13px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda)' }}>
+                Pauta automática — {pauta.itens.length} cliente(s){pauta.desde ? ` · mudanças desde o comitê de ${formatarData(pauta.desde)}` : ''}
+              </h4>
+              {pauta.itens.length === 0 ? (
+                <p className="py-3 text-center text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
+                  Nenhum plano atrasado, cliente crítico ou alerta vermelho novo para pautar.
+                </p>
+              ) : (
+                <ul className="flex flex-col divide-y" style={{ borderColor: 'var(--cor-borda)' }}>
+                  {pauta.itens.map((item) => (
+                    <li key={item.clienteId}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/clientes/${item.clienteId}`)}
+                        className="flex w-full flex-col gap-1 py-2 text-left hover:bg-[var(--cor-fundo-recuado)] sm:flex-row sm:items-start sm:gap-3"
+                      >
+                        <span className="flex min-w-0 flex-wrap items-center gap-2 sm:w-72 sm:shrink-0">
+                          <span className="font-medium" style={{ color: 'var(--cor-primaria)' }}>
+                            {item.nome}
+                          </span>
+                          <StatusBadge status={item.status} />
+                          {item.criticidade && <CriticidadeClassificadaBadge criticidade={item.criticidade} />}
+                        </span>
+                        <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-xs">
+                          {item.motivos.map((m, i) => (
+                            <span key={i} className="break-words">
+                              <strong>{ROTULO_MOTIVO[m.motivo]}:</strong> {m.descricao}
+                            </span>
+                          ))}
+                        </span>
+                        <span className="numeros-tabulares text-xs sm:w-28 sm:shrink-0 sm:text-right">{formatarMoeda(item.risco)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           <p className="mb-1 text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
             Roteiro automático do comitê — posição consolidada de {formatarData(comites.find((c) => c.status === 'REALIZADO')?.data ?? null)} até hoje.
           </p>
@@ -248,6 +347,17 @@ export default function ComitesAtas() {
           </div>
         </Painel>
       )}
+    </div>
+  )
+}
+
+function ItemAta({ rotulo, valor }: { rotulo: string; valor: string | null | undefined }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] font-semibold uppercase" style={{ color: 'var(--cor-texto-secundario)' }}>
+        {rotulo}
+      </dt>
+      <dd className="whitespace-pre-line break-words">{valor?.trim() ? valor : '—'}</dd>
     </div>
   )
 }

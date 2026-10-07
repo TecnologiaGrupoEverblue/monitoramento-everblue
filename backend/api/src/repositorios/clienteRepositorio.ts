@@ -1,8 +1,8 @@
-import type { Cliente, FiltrosGlobais } from '@monitoramento/dominio'
+import type { Cliente, DocumentoCliente, FiltrosGlobais } from '@monitoramento/dominio'
 import { linhaParaEntidade, montarUpdateParcial, type Executor } from '../infra/banco'
 import { condicoesClientes } from './filtrosSql'
 
-const COLUNAS = `c.id, c.nome, c.cnpj, c.grupo_economico_id, c.gerente_id, c.plataforma_id, c.setor, c.ramo_atividade,
+const COLUNAS = `c.id, c.nome, c.cnpj, c.grupo_economico_id, c.gerente_id, c.plataforma_id, c.carteira_id, c.setor, c.ramo_atividade,
                  c.produtos, c.status, c.prioridade, c.criticidade, c.responsavel, c.criado_em`
 
 /** Campos que a interface pode alterar num cliente — decisões manuais do comitê. */
@@ -23,36 +23,93 @@ export class ClienteRepositorio {
     return rows[0] ? linhaParaEntidade<Cliente>(rows[0]) : null
   }
 
+  /** Todo documento (principal ou não) → cliente dono. É por aqui que a
+   * importação reconhece um cliente que já existe. */
+  async mapaPorDocumento(executor: Executor = this.db): Promise<Map<string, Cliente>> {
+    const { rows } = await executor.query(
+      `SELECT ${COLUNAS}, d.documento_normalizado
+         FROM cliente_documento d JOIN cliente c ON c.id = d.cliente_id`,
+    )
+    return new Map(rows.map((r) => [String(r.documento_normalizado), linhaParaEntidade<Cliente>({ ...r, documento_normalizado: undefined })]))
+  }
+
+  /** Compatibilidade: só o documento principal. */
   async mapaPorCnpjNormalizado(executor: Executor = this.db): Promise<Map<string, Cliente>> {
-    const { rows } = await executor.query(`SELECT ${COLUNAS}, c.cnpj_normalizado FROM cliente c`)
-    return new Map(rows.map((r) => [String(r.cnpj_normalizado), linhaParaEntidade<Cliente>({ ...r, cnpj_normalizado: undefined })]))
+    return this.mapaPorDocumento(executor)
+  }
+
+  async documentos(clienteId: string): Promise<DocumentoCliente[]> {
+    const { rows } = await this.db.query(
+      'SELECT documento, principal FROM cliente_documento WHERE cliente_id = $1 ORDER BY principal DESC, id',
+      [clienteId],
+    )
+    return rows.map((r) => ({ documento: r.documento, principal: r.principal }))
+  }
+
+  async documentosPorCliente(executor: Executor = this.db): Promise<Map<string, string[]>> {
+    const { rows } = await executor.query('SELECT cliente_id, documento FROM cliente_documento ORDER BY cliente_id, principal DESC, id')
+    const mapa = new Map<string, string[]>()
+    for (const r of rows) {
+      const lista = mapa.get(r.cliente_id) ?? []
+      lista.push(r.documento)
+      mapa.set(r.cliente_id, lista)
+    }
+    return mapa
+  }
+
+  /** Acrescenta documentos secundários. Nunca remove nem troca o principal. */
+  async adicionarDocumentos(clienteId: string, documentos: string[], executor: Executor = this.db): Promise<number> {
+    let novos = 0
+    for (const documento of documentos) {
+      const { rowCount } = await executor.query(
+        `INSERT INTO cliente_documento (cliente_id, documento, principal) VALUES ($1, $2, FALSE)
+         ON CONFLICT (documento_normalizado) DO NOTHING`,
+        [clienteId, documento],
+      )
+      novos += rowCount ?? 0
+    }
+    return novos
   }
 
   async criar(cliente: Cliente, executor: Executor = this.db): Promise<void> {
     await executor.query(
-      `INSERT INTO cliente (id, nome, cnpj, grupo_economico_id, gerente_id, plataforma_id, setor, ramo_atividade, produtos,
+      `INSERT INTO cliente (id, nome, cnpj, grupo_economico_id, gerente_id, plataforma_id, carteira_id, setor, ramo_atividade, produtos,
                             status, prioridade, criticidade, responsavel, criado_em)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, 'car_everblue'), $8, $9, $10, $11, $12, $13, $14, $15)`,
       [
-        cliente.id, cliente.nome, cliente.cnpj, cliente.grupoEconomicoId, cliente.gerenteId, cliente.plataformaId, cliente.setor,
+        cliente.id, cliente.nome, cliente.cnpj, cliente.grupoEconomicoId, cliente.gerenteId, cliente.plataformaId, cliente.carteiraId ?? null, cliente.setor,
         cliente.ramoAtividade, cliente.produtos, cliente.status, cliente.prioridade, cliente.criticidade, cliente.responsavel, cliente.criadoEm,
       ],
     )
   }
 
-  /** Atualização vinda da Importação Semanal: nunca toca em prioridade,
-   * criticidade nem responsável — decisões manuais do comitê. */
+  /** Atualização vinda da Importação Semanal: cadastro e status. Carteira só
+   * muda quando a planilha traz a coluna. Prioridade e criticidade são
+   * gravadas à parte, pela classificação semanal; responsável nunca. */
   async atualizarPelaImportacao(
     id: string,
-    dados: Pick<Cliente, 'nome' | 'grupoEconomicoId' | 'gerenteId' | 'plataformaId' | 'setor' | 'ramoAtividade' | 'produtos' | 'status'>,
+    dados: Pick<Cliente, 'nome' | 'grupoEconomicoId' | 'gerenteId' | 'plataformaId' | 'setor' | 'ramoAtividade' | 'produtos' | 'status'> & { carteiraId?: string | null },
     executor: Executor = this.db,
   ): Promise<void> {
     await executor.query(
       `UPDATE cliente SET nome = $2, grupo_economico_id = $3, gerente_id = $4, plataforma_id = $5, setor = $6,
-                          ramo_atividade = $7, produtos = $8, status = $9
+                          ramo_atividade = $7, produtos = $8, status = $9, carteira_id = COALESCE($10, carteira_id)
         WHERE id = $1`,
-      [id, dados.nome, dados.grupoEconomicoId, dados.gerenteId, dados.plataformaId, dados.setor, dados.ramoAtividade, dados.produtos, dados.status],
+      [id, dados.nome, dados.grupoEconomicoId, dados.gerenteId, dados.plataformaId, dados.setor, dados.ramoAtividade, dados.produtos, dados.status, dados.carteiraId ?? null],
     )
+  }
+
+  /** Prioridade e criticidade calculadas pela classificação semanal — em lote. */
+  async gravarClassificacoes(lista: (Pick<Cliente, 'id' | 'prioridade' | 'criticidade'>)[], executor: Executor = this.db): Promise<void> {
+    for (let i = 0; i < lista.length; i += 1000) {
+      const lote = lista.slice(i, i + 1000)
+      await executor.query(
+        `UPDATE cliente c SET prioridade = v.prioridade, criticidade = v.criticidade
+           FROM unnest($1::text[], $2::text[], $3::text[]) AS v(id, prioridade, criticidade)
+          WHERE c.id = v.id`,
+        [lote.map((x) => x.id), lote.map((x) => x.prioridade), lote.map((x) => x.criticidade)],
+      )
+    }
   }
 
   async atualizar(id: string, alteracoes: Partial<Cliente>, executor: Executor = this.db): Promise<boolean> {

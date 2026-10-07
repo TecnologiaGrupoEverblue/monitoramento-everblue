@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 /**
@@ -47,7 +48,10 @@ export function Modal({
     }
   }, [])
 
-  return (
+  // Portal no <body>: um ancestral com backdrop-filter/transform (ex.: Painel)
+  // vira o "containing block" de position:fixed e prenderia o diálogo dentro
+  // dele, por baixo da barra superior.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onMouseDown={aoFechar}>
       <div
         ref={caixa}
@@ -79,6 +83,7 @@ export function Modal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

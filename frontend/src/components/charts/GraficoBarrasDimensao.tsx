@@ -39,7 +39,7 @@ export default function GraficoBarrasDimensao({
         ) : (
           <>
             <XAxis dataKey="label" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
-            <YAxis tickFormatter={(v) => formatarMoedaCompacta(v)} tick={{ fontSize: 11 }} />
+            <YAxis tickFormatter={(v) => formatarMoedaCompacta(v)} tick={{ fontSize: 11 }} width={84} />
           </>
         )}
         <Tooltip formatter={(valor) => formatarMoedaCompacta(Number(valor))} labelStyle={{ fontWeight: 600 }} />

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { Gerente, GrupoEconomico, Plataforma } from '@monitoramento/dominio'
+import type { Carteira, Gerente, GrupoEconomico, Plataforma } from '@monitoramento/dominio'
 import { linhasParaEntidades, type Executor } from '../infra/banco'
 
 /** Identificador de entidade: prefixo + instante (base 36) + aleatório.
@@ -9,8 +9,8 @@ export function novoId(prefixo: string): string {
   return `${prefixo}_${Date.now().toString(36)}${randomUUID().replace(/-/g, '').slice(0, 10)}`
 }
 
-type TabelaCadastro = 'grupo_economico' | 'gerente' | 'plataforma'
-const PREFIXO: Record<TabelaCadastro, string> = { grupo_economico: 'grp', gerente: 'ger', plataforma: 'plt' }
+type TabelaCadastro = 'grupo_economico' | 'gerente' | 'plataforma' | 'carteira'
+const PREFIXO: Record<TabelaCadastro, string> = { grupo_economico: 'grp', gerente: 'ger', plataforma: 'plt', carteira: 'car' }
 
 /** Grupos econômicos, gerentes e plataformas comerciais. */
 export class CadastrosRepositorio {
@@ -25,6 +25,18 @@ export class CadastrosRepositorio {
   }
   async listarPlataformas(): Promise<Plataforma[]> {
     return linhasParaEntidades((await this.db.query('SELECT id, nome FROM plataforma ORDER BY id COLLATE "C"')).rows)
+  }
+
+  async listarCarteiras(executor: Executor = this.db): Promise<Carteira[]> {
+    return linhasParaEntidades((await executor.query('SELECT id, nome, apartada FROM carteira ORDER BY apartada, nome')).rows)
+  }
+  async idsCarteirasApartadas(executor: Executor = this.db): Promise<Set<string>> {
+    const { rows } = await executor.query('SELECT id FROM carteira WHERE apartada')
+    return new Set(rows.map((r) => String(r.id)))
+  }
+  async definirCarteiraApartada(id: string, apartada: boolean): Promise<boolean> {
+    const { rowCount } = await this.db.query('UPDATE carteira SET apartada = $2 WHERE id = $1', [id, apartada])
+    return (rowCount ?? 0) > 0
   }
 
   /** A planilha traz o nome, não o id: acha o cadastro (sem diferenciar

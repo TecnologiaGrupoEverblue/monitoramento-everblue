@@ -43,6 +43,12 @@ COPY --from=build /repo/backend/api/dist ./dist
 COPY backend/api/package.json ./package.json
 COPY database/migrations ./database/migrations
 
+# busybox: só para o healthcheck (`busybox wget`), muito mais leve que subir um
+# segundo processo Node a cada verificação.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends busybox \
+ && rm -rf /var/lib/apt/lists/*
+
 # Usuário sem privilégio e sem shell de login. O sistema de arquivos do
 # contêiner é somente leitura em produção (read_only no compose).
 RUN groupadd -r -g 10001 emon \

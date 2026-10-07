@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { ArmazenamentoS3 } from './infra/armazenamento'
 import { criarBanco } from './infra/banco'
 import { executarBootstrap } from './infra/bootstrap'
+import { classificarUltimaSemanaPendente } from './infra/classificacaoRetroativa'
 import { carregarDemonstracao } from './infra/cargaDemonstracao'
 import { aplicarMigracoes } from './infra/migrador'
 import { carregarConfiguracao } from './config/configuracao'
@@ -38,6 +39,7 @@ async function principal() {
         const r = await aplicarMigracoes(banco.pool, diretorioMigracoes(), log)
         log(r.aplicadas.length ? `migrações aplicadas: ${r.aplicadas.join(', ')}` : `nenhuma migração pendente (${r.jaAplicadas} já aplicadas)`)
         await executarBootstrap(banco.pool, new ArmazenamentoS3(cfg.minio), log)
+        await classificarUltimaSemanaPendente(banco, log)
         break
       }
       case 'carga-demonstracao': {

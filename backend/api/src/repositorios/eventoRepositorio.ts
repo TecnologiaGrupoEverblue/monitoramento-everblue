@@ -1,6 +1,6 @@
 /** Histórico de eventos — append-only. Nada aqui é editado ou apagado. */
 import type { EventoHistorico } from '@monitoramento/dominio'
-import { linhasParaEntidades, type Executor } from '../infra/banco'
+import { inserirEmLote, linhasParaEntidades, type Executor } from '../infra/banco'
 import { novoId } from './cadastrosRepositorio'
 
 export class EventoRepositorio {
@@ -18,6 +18,22 @@ export class EventoRepositorio {
       (await this.db.query(`SELECT * FROM evento_historico WHERE tipo = 'MUDANCA_STATUS' AND cliente_id = ANY($1)`, [clienteIds])).rows,
     )
   }
+  async registrarMuitos(eventos: Omit<EventoHistorico, 'id'>[], executor: Executor = this.db): Promise<void> {
+    await inserirEmLote(executor, 'evento_historico', eventos.map((e) => ({ id: novoId('evt'), ...e })) as unknown as Record<string, unknown>[])
+  }
+
+  /** Mudanças de status desde uma data (ou todas), só dos clientes informados. */
+  async mudancasDeStatusDesde(clienteIds: string[], desde: string | null): Promise<EventoHistorico[]> {
+    return linhasParaEntidades(
+      (
+        await this.db.query(
+          `SELECT * FROM evento_historico WHERE tipo = 'MUDANCA_STATUS' AND cliente_id = ANY($1) AND ($2::date IS NULL OR data >= $2::date) ORDER BY data`,
+          [clienteIds, desde],
+        )
+      ).rows,
+    )
+  }
+
   async registrar(evento: Omit<EventoHistorico, 'id'>, executor: Executor = this.db): Promise<EventoHistorico> {
     const registro: EventoHistorico = { ...evento, id: novoId('evt') }
     await executor.query(

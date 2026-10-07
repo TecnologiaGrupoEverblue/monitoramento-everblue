@@ -166,7 +166,8 @@ export async function rotasArquivos(app: FastifyInstance, deps: Dependencias): P
 
   // ------------------------------------------------------------ exportações
   app.get('/api/v1/exportacoes', leitor, () => deps.servicos.exportacao.disponiveis())
-  app.post('/api/v1/exportacoes/:chave', analista, async (request, reply) => {
+  // Exportação reúne a carteira inteira (dado protegido): limite contra raspagem.
+  app.post('/api/v1/exportacoes/:chave', { ...analista, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { chave } = z.object({ chave: z.string().regex(/^[a-z0-9-]{1,40}$/) }).parse(request.params)
     // Mesmos filtros cruzados das telas, com a mesma validação.
     return reply.status(201).send(await deps.servicos.exportacao.exportar(chave, filtrosDe(request.body ?? {}), ator(request)))

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { KpiCard, Painel } from '../components/ui/Card'
 import { StatusPlanoBadge } from '../components/ui/Badges'
 import { BotaoExportar } from '../components/arquivos/BotaoExportar'
+import ModalAndamentoPlano from '../components/comite/ModalAndamentoPlano'
+import { useSessao } from '../contexts/SessaoContext'
 import { useFiltros } from '../contexts/FiltrosContext'
 import type { Cliente, PlanoAcao } from '../models/types'
 import { clienteRepository, planoAcaoRepository } from '../repositories'
@@ -17,6 +19,8 @@ export default function PlanosDeAcao() {
   const [clientesPorId, setClientesPorId] = useState<Map<string, Cliente>>(new Map())
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('TODOS')
   const [carregando, setCarregando] = useState(true)
+  const [editando, setEditando] = useState<PlanoAcao | null>(null)
+  const podeEditar = useSessao().pode('analista')
 
   useEffect(() => {
     if (carregandoFiltros) return
@@ -49,7 +53,8 @@ export default function PlanosDeAcao() {
             Planos de Ação
           </h1>
           <p className="text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
-            Acompanhamento dos compromissos assumidos pelos clientes em Monitoramento, Saída de Risco e Jurídico
+            Acompanhamento dos compromissos assumidos pelos clientes em Monitoramento, Saída de Risco e Jurídico. Prazo vencido sem conclusão vira
+            atrasado automaticamente e entra na pauta do próximo comitê.
           </p>
         </div>
         <BotaoExportar chave="planos-de-acao" filtros={filtros} />
@@ -77,7 +82,9 @@ export default function PlanosDeAcao() {
                   <th className="px-4 py-2.5 text-left">Plano</th>
                   <th className="px-4 py-2.5 text-left">Responsável</th>
                   <th className="px-4 py-2.5 text-left">Prazo</th>
+                  <th className="px-4 py-2.5 text-left">Andamento</th>
                   <th className="px-4 py-2.5 text-left">Status</th>
+                  {podeEditar && <th className="px-4 py-2.5" />}
                 </tr>
               </thead>
               <tbody>
@@ -97,9 +104,28 @@ export default function PlanosDeAcao() {
                       <td className="max-w-xs px-4 py-2.5 text-xs text-gray-600">{p.plano}</td>
                       <td className="px-4 py-2.5">{p.responsavel}</td>
                       <td className="px-4 py-2.5">{formatarData(p.dataLimite)}</td>
+                      <td className="max-w-xs px-4 py-2.5 text-xs">
+                        {p.oQueFoiFeito && <p style={{ color: 'var(--cor-normal)' }}>Feito: {p.oQueFoiFeito}</p>}
+                        {p.oQueNaoFoiFeito && <p style={{ color: 'var(--cor-critico)' }}>Não feito: {p.oQueNaoFoiFeito}</p>}
+                        {!p.oQueFoiFeito && !p.oQueNaoFoiFeito && <span style={{ color: 'var(--cor-texto-secundario)' }}>—</span>}
+                      </td>
                       <td className="px-4 py-2.5">
                         <StatusPlanoBadge status={p.status} />
                       </td>
+                      {podeEditar && (
+                        <td className="px-4 py-2.5 text-right">
+                          <button
+                            type="button"
+                            className="botao-secundario whitespace-nowrap px-2.5 py-1 text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setEditando(p)
+                            }}
+                          >
+                            Andamento
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
@@ -108,6 +134,16 @@ export default function PlanosDeAcao() {
           </div>
         )}
       </Painel>
+      {editando && (
+        <ModalAndamentoPlano
+          plano={editando}
+          nomeCliente={clientesPorId.get(editando.clienteId)?.nome}
+          aoFechar={(atualizado) => {
+            setEditando(null)
+            if (atualizado) setPlanos((lista) => lista.map((x) => (x.id === atualizado.id ? atualizado : x)))
+          }}
+        />
+      )}
     </div>
   )
 }

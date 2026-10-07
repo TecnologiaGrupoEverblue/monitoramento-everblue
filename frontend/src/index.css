@@ -183,6 +183,20 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* Toque (celular/tablet): alvo mínimo de 44 × 44 px (WCAG 2.2). No desktop
+   com mouse, a altura aprovada da Intranet continua a mesma. */
+@media (pointer: coarse) {
+  .botao-primario,
+  .botao-secundario,
+  .alvo-toque {
+    min-height: 2.75rem;
+  }
+  .alvo-toque {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
 /* Campos de digitação: padrão Intranet (fundo branco translúcido, foco violeta) */
 .campo,
 input[type='text'],
@@ -332,6 +346,16 @@ select optgroup {
   }
   .sem-impressao {
     display: none !important;
+  }
+  /* Um cliente não quebra entre páginas; tabelas largas cabem na folha. */
+  .ata-bloco {
+    break-inside: avoid;
+  }
+  #ata-para-impressao table {
+    font-size: 10px;
+  }
+  #ata-para-impressao .overflow-x-auto {
+    overflow: visible !important;
   }
 }
 

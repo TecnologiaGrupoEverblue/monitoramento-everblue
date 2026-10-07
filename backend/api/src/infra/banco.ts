@@ -32,6 +32,10 @@ export function criarBanco(url: string, max: number): Banco {
     connectionTimeoutMillis: 10_000,
     // Consulta sem teto é como uma tela pesada derruba o banco dos outros.
     statement_timeout: 30_000,
+    // Uma transação esquecida aberta ou uma espera de lock longa não pode
+    // segurar linhas e conexões dos outros.
+    lock_timeout: 10_000,
+    idle_in_transaction_session_timeout: 60_000,
     application_name: 'everblue-monitoramento-api',
   })
   return {

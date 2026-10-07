@@ -2,28 +2,63 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import ChecklistAnalise from '../components/ChecklistAnalise'
+import HistoricoDecisoes from '../components/ficha/HistoricoDecisoes'
+import PainelClassificacao from '../components/ficha/PainelClassificacao'
+import PainelRestritivos from '../components/ficha/PainelRestritivos'
+import { useSessao } from '../contexts/SessaoContext'
 import PainelTransacional from '../components/PainelTransacional'
 import { Painel } from '../components/ui/Card'
 import { useFiltros } from '../contexts/FiltrosContext'
-import { CriticidadeBadge, GravidadeBadge, PrioridadeBadge, StatusBadge, StatusPlanoBadge } from '../components/ui/Badges'
-import type { Alerta, Cliente, EventoHistorico, Gerente, GrupoEconomico, Juridico, PlanoAcao, Plataforma, SaidaDeRisco, SnapshotSemanal } from '../models/types'
+import { CriticidadeBadge, GravidadeBadge, PrioridadeBadge, StatusBadge } from '../components/ui/Badges'
+import type {
+  Alerta,
+  ClassificacaoSemanal,
+  Cliente,
+  DocumentoCliente,
+  EventoHistorico,
+  Gerente,
+  GrupoEconomico,
+  Juridico,
+  PlanoAcao,
+  Plataforma,
+  RestritivoSemanal,
+  SaidaDeRisco,
+  SnapshotSemanal,
+} from '../models/types'
 import {
   alertaRepository,
   cadastrosRepository,
+  classificacaoRepository,
   clienteRepository,
   eventoRepository,
   iasrRepository,
   juridicoRepository,
   planoAcaoRepository,
+  restritivoRepository,
   saidaDeRiscoRepository,
   snapshotRepository,
 } from '../repositories'
-import { formatarData, formatarDataHora, formatarMoeda, formatarPercentual, STATUS_LABEL } from '../utils/formatters'
+import { formatarData, formatarDataHora, formatarMoeda, formatarMoedaCompacta, formatarPercentual, formatarPercentualOpcional, STATUS_LABEL, STATUS_PROPOSTA_LABEL } from '../utils/formatters'
+
+/** Sem posição importada o valor é DESCONHECIDO, não zero (dado ausente nunca
+ * aparece como favorável). */
+const SEM_POSICAO = '—'
+const moeda = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : formatarMoeda(v))
+const perc = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : formatarPercentual(v))
+const dias = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : `${v} dias`)
+
+const ROTULO_EVENTO: Record<string, string> = {
+  MUDANCA_CRITICIDADE: 'Criticidade',
+  RESTRITIVOS: 'Restritivos',
+  PLANO_ACAO: 'Plano de ação',
+  DECISAO_COMITE: 'Decisão do comitê',
+}
 
 export default function FichaCliente() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { filtros } = useFiltros()
+  const { filtros, opcoes } = useFiltros()
+  const podeEditar = useSessao().pode('analista')
   const [cliente, setCliente] = useState<Cliente | null>(null)
   const [grupo, setGrupo] = useState<GrupoEconomico | null>(null)
   const [gerente, setGerente] = useState<Gerente | null>(null)
@@ -35,6 +70,9 @@ export default function FichaCliente() {
   const [saida, setSaida] = useState<SaidaDeRisco | null>(null)
   const [juridico, setJuridico] = useState<Juridico | null>(null)
   const [eventosIasr, setEventosIasr] = useState<{ tipo: string; data: string; descricao: string }[]>([])
+  const [documentos, setDocumentos] = useState<DocumentoCliente[]>([])
+  const [classificacoes, setClassificacoes] = useState<ClassificacaoSemanal[]>([])
+  const [restritivos, setRestritivos] = useState<RestritivoSemanal[]>([])
   const [carregando, setCarregando] = useState(true)
 
   useEffect(() => {
@@ -53,7 +91,10 @@ export default function FichaCliente() {
       saidaDeRiscoRepository.porCliente(id),
       juridicoRepository.porCliente(id),
       iasrRepository.listarComEventos(),
-    ]).then(([cli, grupos, gerentes, plataformas, snaps, ev, al, pl, sdr, jur, iasr]) => {
+      clienteRepository.documentos(id),
+      classificacaoRepository.porCliente(id),
+      restritivoRepository.porCliente(id),
+    ]).then(([cli, grupos, gerentes, plataformas, snaps, ev, al, pl, sdr, jur, iasr, docs, cls, rest]) => {
       if (!ativo || !cli) return
       setCliente(cli)
       setGrupo(grupos.get(cli.grupoEconomicoId) ?? null)
@@ -66,6 +107,9 @@ export default function FichaCliente() {
       setSaida(sdr)
       setJuridico(jur)
       setEventosIasr(iasr.filter((r) => r.clienteId === id).flatMap((r) => r.eventos))
+      setDocumentos(docs)
+      setClassificacoes(cls)
+      setRestritivos(rest)
       setCarregando(false)
     })
     return () => {
@@ -77,9 +121,12 @@ export default function FichaCliente() {
 
   const atual = serie[serie.length - 1]
   const anterior = serie[serie.length - 2]
-  const variacaoRisco = atual && anterior && anterior.riscoCliente > 0 ? ((atual.riscoCliente - anterior.riscoCliente) / anterior.riscoCliente) * 100 : 0
-  const percVencido = atual && atual.riscoCliente > 0 ? (atual.vencidoOficial / atual.riscoCliente) * 100 : 0
-  const ilMedio = atual ? (atual.il30 + atual.il60 + atual.il90 + atual.il120 + atual.il150 + atual.il180) / 6 : 0
+  const variacaoRisco = atual && anterior && anterior.riscoCliente > 0 ? ((atual.riscoCliente - anterior.riscoCliente) / anterior.riscoCliente) * 100 : null
+  const percVencido = atual && atual.riscoCliente > 0 ? (atual.vencidoOficial / atual.riscoCliente) * 100 : null
+  const ilsComBase = atual ? [atual.il30, atual.il60, atual.il90, atual.il120, atual.il150, atual.il180].filter((v): v is number => v !== null && v !== undefined) : []
+  const ilMedio = ilsComBase.length > 0 ? ilsComBase.reduce((a, b) => a + b, 0) / ilsComBase.length : null
+  const carteira = opcoes.carteiras.find((c) => c.id === (cliente.carteiraId ?? 'car_everblue'))
+  const documentosTexto = documentos.length > 0 ? documentos.map((d) => d.documento).join(', ') : cliente.cnpj
 
   const dadosLiquidez = serie.map((s) => ({ semana: s.semanaRef, IL30: s.il30, IL90: s.il90, IL180: s.il180 }))
   const dadosRisco = serie.map((s) => ({ semana: s.semanaRef, risco: s.riscoCliente, vencido: s.vencidoOficial }))
@@ -97,7 +144,8 @@ export default function FichaCliente() {
             {cliente.nome}
           </h1>
           <p className="text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
-            {cliente.cnpj} · {grupo?.nome} · {cliente.setor} / {cliente.ramoAtividade}
+            {documentos.length > 1 ? `${cliente.cnpj} (+${documentos.length - 1} CNPJ)` : cliente.cnpj} · {grupo?.nome} · {cliente.setor} / {cliente.ramoAtividade}
+            {carteira && ` · Carteira ${carteira.nome}${carteira.apartada ? ' (apartada)' : ''}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -112,11 +160,14 @@ export default function FichaCliente() {
       </Painel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <PainelClassificacao historico={classificacoes} semanaRef={semanaRefChecklist} />
+
         <Painel titulo="Identificação">
           <DlGrid
             itens={[
               ['Cliente', cliente.nome],
-              ['CNPJ', cliente.cnpj],
+              [documentos.length > 1 ? `CNPJs (${documentos.length})` : 'CNPJ', documentosTexto],
+              ['Carteira', carteira ? `${carteira.nome}${carteira.apartada ? ' — apartada dos indicadores' : ''}` : '—'],
               ['Grupo econômico', grupo?.nome ?? '—'],
               ['Plataforma/Carteira', plataforma?.nome ?? '—'],
               ['Gerente', gerente?.nome ?? '—'],
@@ -131,17 +182,17 @@ export default function FichaCliente() {
         <Painel titulo="Exposição">
           <DlGrid
             itens={[
-              ['Risco do cliente', formatarMoeda(atual?.riscoCliente ?? 0)],
-              ['Risco consolidado do grupo', formatarMoeda(atual?.riscoGrupo ?? 0)],
-              ['Risco da semana anterior', formatarMoeda(anterior?.riscoCliente ?? 0)],
-              ['Variação do risco', `${variacaoRisco >= 0 ? '+' : ''}${variacaoRisco.toFixed(1)}%`],
-              ['Limite global', formatarMoeda(atual?.limiteGlobal ?? 0)],
-              ['% consumo do limite', formatarPercentual(atual?.percConsumoLimite ?? 0)],
-              ['Status da proposta', atual?.statusProposta ?? '—'],
+              ['Risco do cliente', moeda(atual?.riscoCliente)],
+              ['Risco consolidado do grupo', moeda(atual?.riscoGrupo)],
+              ['Risco da semana anterior', moeda(anterior?.riscoCliente)],
+              ['Variação do risco', variacaoRisco === null ? 'Sem posição anterior para comparar' : `${variacaoRisco >= 0 ? '+' : ''}${variacaoRisco.toFixed(1)}%`],
+              ['Limite global', moeda(atual?.limiteGlobal)],
+              ['% consumo do limite', perc(atual?.percConsumoLimite)],
+              ['Status da proposta', atual ? (STATUS_PROPOSTA_LABEL[atual.statusProposta] ?? atual.statusProposta) : '—'],
               ['Validade da proposta', formatarData(atual?.validadeProposta)],
-              ['Tranche consolidada', formatarMoeda(atual?.trancheConsolidada ?? 0)],
-              ['Valor em andamento', formatarMoeda(atual?.valorEmAndamento ?? 0)],
-              ['% consumo da tranche', formatarPercentual(atual?.percConsumoTranche ?? 0)],
+              ['Tranche consolidada', moeda(atual?.trancheConsolidada)],
+              ['Valor em andamento', moeda(atual?.valorEmAndamento)],
+              ['% consumo da tranche', perc(atual?.percConsumoTranche)],
               ['Status da tranche', atual?.statusTranche ?? '—'],
             ]}
           />
@@ -150,11 +201,11 @@ export default function FichaCliente() {
         <Painel titulo="Inadimplência">
           <DlGrid
             itens={[
-              ['Vencido oficial', formatarMoeda(atual?.vencidoOficial ?? 0)],
-              ['% Vencido', formatarPercentual(percVencido)],
+              ['Vencido oficial', moeda(atual?.vencidoOficial)],
+              ['% Vencido', perc(percVencido)],
               ['Vencido desde', formatarData(atual?.vencidoDesde)],
-              ['Aging da carteira', `${atual?.agingCarteiraDias ?? 0} dias`],
-              ['Prazo médio da carteira', `${atual?.prazoMedioCarteiraDias ?? 0} dias`],
+              ['Aging da carteira', dias(atual?.agingCarteiraDias)],
+              ['Prazo médio da carteira', dias(atual?.prazoMedioCarteiraDias)],
             ]}
           />
         </Painel>
@@ -162,13 +213,13 @@ export default function FichaCliente() {
         <Painel titulo="Liquidez">
           <DlGrid
             itens={[
-              ['IL 30 dias', formatarPercentual(atual?.il30 ?? 0)],
-              ['IL 60 dias', formatarPercentual(atual?.il60 ?? 0)],
-              ['IL 90 dias', formatarPercentual(atual?.il90 ?? 0)],
-              ['IL 120 dias', formatarPercentual(atual?.il120 ?? 0)],
-              ['IL 150 dias', formatarPercentual(atual?.il150 ?? 0)],
-              ['IL 180 dias', formatarPercentual(atual?.il180 ?? 0)],
-              ['IL médio', formatarPercentual(ilMedio)],
+              ['IL 30 dias', formatarPercentualOpcional(atual?.il30)],
+              ['IL 60 dias', formatarPercentualOpcional(atual?.il60)],
+              ['IL 90 dias', formatarPercentualOpcional(atual?.il90)],
+              ['IL 120 dias', formatarPercentualOpcional(atual?.il120)],
+              ['IL 150 dias', formatarPercentualOpcional(atual?.il150)],
+              ['IL 180 dias', formatarPercentualOpcional(atual?.il180)],
+              ['IL médio (janelas com base)', formatarPercentualOpcional(ilMedio)],
             ]}
           />
           <ResponsiveContainer width="100%" height={160}>
@@ -187,12 +238,12 @@ export default function FichaCliente() {
         <Painel titulo="Manifestos e qualidade do recebível">
           <DlGrid
             itens={[
-              ['% sem atuação de manifesto', formatarPercentual(atual?.manifestoPercSemAtuacao ?? 0)],
-              ['Inacessível', formatarMoeda(atual?.manifestoInacessivel ?? 0)],
-              ['Não confirma', formatarMoeda(atual?.manifestoNaoConfirma ?? 0)],
-              ['Transação desconhecida', formatarMoeda(atual?.manifestoTransacaoDesconhecida ?? 0)],
-              ['Lastro inconsistente', formatarMoeda(atual?.manifestoLastroInconsistente ?? 0)],
-              ['Transação não concluída', formatarMoeda(atual?.manifestoTransacaoNaoConcluida ?? 0)],
+              ['% sem atuação de manifesto', perc(atual?.manifestoPercSemAtuacao)],
+              ['Inacessível', moeda(atual?.manifestoInacessivel)],
+              ['Não confirma', moeda(atual?.manifestoNaoConfirma)],
+              ['Transação desconhecida', moeda(atual?.manifestoTransacaoDesconhecida)],
+              ['Lastro inconsistente', moeda(atual?.manifestoLastroInconsistente)],
+              ['Transação não concluída', moeda(atual?.manifestoTransacaoNaoConcluida)],
             ]}
           />
         </Painel>
@@ -200,22 +251,29 @@ export default function FichaCliente() {
         <Painel titulo="Performance da carteira">
           <DlGrid
             itens={[
-              ['Liquidado no período', formatarMoeda(atual?.liquidadoNoPeriodo ?? 0)],
-              ['Recompras', formatarMoeda(atual?.recompras ?? 0)],
+              ['Liquidado no período', moeda(atual?.liquidadoNoPeriodo)],
+              ['Recompras', moeda(atual?.recompras)],
               ['Motivo da recompra', atual?.motivoRecompra ?? '—'],
-              ['% liquidado no prazo', formatarPercentual(atual?.percLiquidadoNoPrazo ?? 0)],
-              ['Atraso médio', `${atual?.atrasoMedioDias ?? 0} dias`],
-              ['Restritivos', String(atual?.restritivos ?? 0)],
+              ['% liquidado no prazo', perc(atual?.percLiquidadoNoPrazo)],
+              ['Atraso médio', dias(atual?.atrasoMedioDias)],
+              ['Restritivos (total)', atual ? String(atual.restritivos) : SEM_POSICAO],
+              ['Prorrogações > 60 dias', atual?.prorrogacoesAcima60d === null || atual?.prorrogacoesAcima60d === undefined ? 'Não informado' : formatarMoeda(atual.prorrogacoesAcima60d)],
+              [
+                'Operações (mês anterior → mês)',
+                atual?.operacoesMes === null || atual?.operacoesMes === undefined ? 'Não informado' : `${moeda(atual.operacoesMesAnterior)} → ${formatarMoeda(atual.operacoesMes)}`,
+              ],
             ]}
           />
         </Painel>
+
+        <PainelRestritivos clienteId={cliente.id} semanaRef={semanaRefChecklist} restritivos={restritivos} podeEditar={podeEditar} aoAtualizar={setRestritivos} />
 
         <Painel titulo="Evolução do risco x vencido" className="lg:col-span-2">
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={dadosRisco} margin={{ left: 8, right: 16, top: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--cor-grade)" />
               <XAxis dataKey="semana" tickFormatter={(v) => formatarData(v)} tick={{ fontSize: 10 }} />
-              <YAxis tick={{ fontSize: 10 }} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatarMoedaCompacta(Number(v))} width={80} />
               <Tooltip labelFormatter={(v) => formatarData(String(v))} formatter={(v) => formatarMoeda(Number(v))} />
               <Line type="monotone" dataKey="risco" stroke="var(--cor-acento)" strokeWidth={2.5} dot={false} />
               <Line type="monotone" dataKey="vencido" stroke="var(--cor-critico)" strokeWidth={2.5} dot={false} />
@@ -234,7 +292,7 @@ export default function FichaCliente() {
                 ['Data de entrada', formatarData(saida.dataEntrada)],
                 ['Motivo', saida.motivo],
                 ['Risco na entrada', formatarMoeda(saida.riscoNaEntrada)],
-                ['Risco atual', formatarMoeda(atual?.riscoCliente ?? 0)],
+                ['Risco atual', moeda(atual?.riscoCliente)],
                 ['Plano de saída', saida.planoSaida],
                 ['Prazo esperado', formatarData(saida.prazoEsperado)],
                 ['Responsável', saida.responsavel],
@@ -275,7 +333,7 @@ export default function FichaCliente() {
           </Painel>
         )}
 
-        <Painel titulo={`Alertas (${alertas.length})`}>
+        <Painel titulo={`Alertas (${alertas.length})`} className="lg:col-span-2">
           {alertas.length === 0 ? (
             <p className="py-4 text-center text-sm text-gray-400">Nenhum alerta registrado.</p>
           ) : (
@@ -294,27 +352,7 @@ export default function FichaCliente() {
           )}
         </Painel>
 
-        <Painel titulo={`Planos de ação (${planos.length})`}>
-          {planos.length === 0 ? (
-            <p className="py-4 text-center text-sm text-gray-400">Nenhum plano registrado.</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {planos.map((p) => (
-                <li key={p.id} className="rounded-lg border p-2 text-sm" style={{ borderColor: 'var(--cor-borda)' }}>
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="font-medium">{p.decisaoAtual}</span>
-                    <StatusPlanoBadge status={p.status} />
-                  </div>
-                  <p className="text-xs text-gray-600">{p.plano}</p>
-                  <p className="text-[11px] text-gray-400">
-                    Responsável: {p.responsavel} · Prazo: {formatarData(p.dataLimite)}
-                  </p>
-                  {p.oQueNaoFoiFeito && <p className="mt-1 text-xs" style={{ color: 'var(--cor-critico)' }}>Não realizado: {p.oQueNaoFoiFeito}</p>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </Painel>
+        <HistoricoDecisoes planos={planos} podeEditar={podeEditar} aoAtualizar={(p) => setPlanos((lista) => lista.map((x) => (x.id === p.id ? p : x)))} />
 
         <Painel titulo="Linha do tempo" className="lg:col-span-2">
           {eventos.length === 0 ? (
@@ -334,7 +372,10 @@ export default function FichaCliente() {
                         <strong>{STATUS_LABEL[e.valorNovo ?? ''] ?? e.valorNovo}</strong> — {e.justificativa}
                       </>
                     ) : (
-                      e.justificativa
+                      <>
+                        {ROTULO_EVENTO[e.tipo] && <strong>{ROTULO_EVENTO[e.tipo]}: </strong>}
+                        {e.justificativa}
+                      </>
                     )}
                   </p>
                 </li>

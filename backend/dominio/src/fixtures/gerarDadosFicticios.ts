@@ -487,7 +487,7 @@ export function gerarDadosFicticios(): DadosFicticios {
       riscoExistente: sdr.riscoNaEntrada,
       indicadoresNaData: {
         percVencido: snapEntrada.riscoCliente > 0 ? Number(((snapEntrada.vencidoOficial / snapEntrada.riscoCliente) * 100).toFixed(1)) : 0,
-        ilMedio: Number(((snapEntrada.il30 + snapEntrada.il60 + snapEntrada.il90) / 3).toFixed(1)),
+        ilMedio: Number((((snapEntrada.il30 ?? 0) + (snapEntrada.il60 ?? 0) + (snapEntrada.il90 ?? 0)) / 3).toFixed(1)),
         aging: snapEntrada.agingCarteiraDias,
       },
       decisaoComiteId: null,

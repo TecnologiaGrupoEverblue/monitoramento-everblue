@@ -1,6 +1,19 @@
 /** Formatação padrão brasileira usada em toda a aplicação. */
 
+/** A partir de R$ 1 milhão o valor é apresentado em milhões com 3 casas
+ * decimais (regra do comitê): R$ 4.307.763 → "R$ 4,308 mi". */
+export const LIMITE_MILHOES = 1_000_000
+
+/** Milhões com exatamente 3 casas: "R$ 14,665 mi" (negativo: "-R$ 1,250 mi"). */
+export function formatarMilhoes(valor: number): string {
+  const texto = (Math.abs(valor) / 1_000_000).toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+  // Espaços inseparáveis: o valor nunca quebra em "R$ 3,229" / "mi" em coluna estreita ou eixo de gráfico.
+  return `${valor < 0 ? '-' : ''}R$\u00a0${texto}\u00a0mi`
+}
+
 export function formatarMoeda(valor: number): string {
+  // Arredonda antes de comparar: 999.999,60 vira "R$ 1,000 mi", não "R$ 1.000.000".
+  if (Math.abs(Math.round(valor)) >= LIMITE_MILHOES) return formatarMilhoes(valor)
   return valor.toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL',
@@ -10,17 +23,20 @@ export function formatarMoeda(valor: number): string {
 
 export function formatarMoedaCompacta(valor: number): string {
   const abs = Math.abs(valor)
-  if (abs >= 1_000_000) {
-    return `R$ ${(valor / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`
-  }
+  if (Math.round(abs) >= LIMITE_MILHOES) return formatarMilhoes(valor)
   if (abs >= 1_000) {
-    return `R$ ${(valor / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} mil`
+    return `R$\u00a0${(valor / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}\u00a0mil`
   }
   return formatarMoeda(valor)
 }
 
 export function formatarPercentual(valor: number, casasDecimais = 1): string {
   return `${valor.toLocaleString('pt-BR', { minimumFractionDigits: casasDecimais, maximumFractionDigits: casasDecimais })}%`
+}
+
+/** Percentual que pode faltar (ex.: janela de liquidez sem base). */
+export function formatarPercentualOpcional(valor: number | null | undefined, casasDecimais = 1, ausente = 'Sem base'): string {
+  return valor === null || valor === undefined ? ausente : formatarPercentual(valor, casasDecimais)
 }
 
 export function formatarData(isoDate: string | null | undefined): string {
@@ -77,6 +93,14 @@ export const GRAVIDADE_LABEL: Record<string, string> = {
   VERDE: 'Verde',
   AMARELO: 'Amarelo',
   VERMELHO: 'Vermelho',
+}
+
+export const STATUS_PROPOSTA_LABEL: Record<string, string> = {
+  EM_ANALISE: 'Em análise',
+  APROVADA: 'Aprovada / vigente',
+  VENCIDA: 'Vencida',
+  REPROVADA: 'Reprovada',
+  SEM_PROPOSTA: 'Sem proposta',
 }
 
 export const STATUS_PLANO_LABEL: Record<string, string> = {

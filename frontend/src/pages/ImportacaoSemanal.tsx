@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { Painel } from '../components/ui/Card'
 import { StatusBadge } from '../components/ui/Badges'
@@ -38,12 +38,17 @@ export default function ImportacaoSemanal() {
   const [confirmando, setConfirmando] = useState(false)
   const podeImportar = pode('analista')
 
-  if (!semanaRefCarregada) {
-    setSemanaRefCarregada(true)
+  useEffect(() => {
+    if (semanaRefCarregada) return
+    let ativo = true
     comiteAtaRepository.proximoComitePlanejado().then((c) => {
-      if (c) setSemanaRef(c.data)
+      if (ativo && c) setSemanaRef(c.data)
+      if (ativo) setSemanaRefCarregada(true)
     })
-  }
+    return () => {
+      ativo = false
+    }
+  }, [semanaRefCarregada])
 
   function aplicarPreview(preparado: PreviewImportacao) {
     setColunasFaltando(preparado.colunasFaltando)
@@ -109,8 +114,9 @@ export default function ImportacaoSemanal() {
           Importação Semanal
         </h1>
         <p className="text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
-          Upload da posição semanal (.xlsx/.csv), validação, comparação com a semana anterior e geração automática de alertas — sem sobrescrever
-          decisões manuais do comitê (planos de ação, pareceres do checklist, prioridade/criticidade/responsável).
+          Upload da posição semanal (.xlsx/.csv), validação, avisos de qualidade do dado, comparação com a semana anterior, alertas e
+          classificação semanal (prioridade, enquadramento e criticidade pelas regras do comitê) — sem sobrescrever decisões manuais do
+          comitê (planos de ação, pareceres do checklist, responsável).
         </p>
       </div>
 
@@ -213,8 +219,30 @@ export default function ImportacaoSemanal() {
                   <CardResumo titulo="Mudanças de status" valor={String(preview.totais.clientesComMudancaDeStatus)} />
                   <CardResumo titulo="Planos de ação já atrasados" valor={String(preview.totais.planosAtrasadosExistentes)} />
                   <CardResumo titulo="Linhas já importadas nesta semana" valor={String(preview.totais.linhasJaImportadas)} cor={preview.totais.linhasJaImportadas > 0 ? 'var(--cor-atencao)' : undefined} />
+                  <CardResumo titulo="Linhas com aviso de qualidade" valor={String(preview.totais.linhasComAviso ?? 0)} cor={(preview.totais.linhasComAviso ?? 0) > 0 ? 'var(--cor-atencao)' : undefined} />
                 </div>
               </Painel>
+
+              {preview.itens.some((i) => (i.avisos ?? []).length > 0) && (
+                <Painel titulo={`Avisos de qualidade do dado (${preview.itens.filter((i) => (i.avisos ?? []).length > 0).length} linha(s)) — não impedem a importação; confira antes de confirmar`}>
+                  <div className="flex max-h-[320px] flex-col gap-2 overflow-auto">
+                    {preview.itens
+                      .filter((i) => (i.avisos ?? []).length > 0)
+                      .map((i) => (
+                        <div key={i.linha} className="border-l-2 p-2 text-sm" style={{ borderColor: 'var(--cor-atencao)', backgroundColor: 'var(--cor-atencao-fundo)' }}>
+                          <p className="font-semibold" style={{ color: 'var(--cor-atencao)' }}>
+                            Linha {i.linha} · {i.nome}
+                          </p>
+                          <ul className="list-inside list-disc text-xs" style={{ color: 'var(--cor-texto-primario)' }}>
+                            {(i.avisos ?? []).map((a, k) => (
+                              <li key={k}>{a}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                  </div>
+                </Painel>
+              )}
 
               <Painel titulo={`3. Conferir linha a linha (${preview.totais.linhasProntas} prontas para importar)`}>
                 <div className="max-h-[420px] overflow-auto border" style={{ borderColor: 'var(--cor-borda)' }}>
@@ -228,6 +256,7 @@ export default function ImportacaoSemanal() {
                         <th className="px-2 py-2 text-right">Δ Risco</th>
                         <th className="px-2 py-2 text-right">% Vencido</th>
                         <th className="px-2 py-2 text-right">Alertas</th>
+                        <th className="px-2 py-2 text-right">Avisos</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -243,6 +272,16 @@ export default function ImportacaoSemanal() {
                             {item.novo && (
                               <span className="ml-1.5 border-l-2 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-normal)', backgroundColor: 'var(--cor-normal-fundo)', borderColor: 'var(--cor-normal)' }}>
                                 novo
+                              </span>
+                            )}
+                            {item.carteira && (
+                              <span className="ml-1.5 border-l-2 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', backgroundColor: 'var(--cor-fundo-recuado)', borderColor: 'var(--cor-borda-forte)' }}>
+                                {item.carteira}
+                              </span>
+                            )}
+                            {(item.documentos?.length ?? 1) > 1 && (
+                              <span className="ml-1.5 text-[10px]" style={{ color: 'var(--cor-texto-secundario)' }} title={item.documentos.join('\n')}>
+                                {item.documentos.length} CNPJs
                               </span>
                             )}
                             {item.jaImportadoNestaSemana && (
@@ -269,6 +308,9 @@ export default function ImportacaoSemanal() {
                             {formatarPercentual(item.percVencidoNovo)}
                           </td>
                           <td className="numeros-tabulares px-2 py-1.5 text-right">{item.alertasGerados.length}</td>
+                          <td className="numeros-tabulares px-2 py-1.5 text-right" style={{ color: (item.avisos ?? []).length > 0 ? 'var(--cor-atencao)' : undefined }} title={(item.avisos ?? []).join('\n') || undefined}>
+                            {(item.avisos ?? []).length || '—'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

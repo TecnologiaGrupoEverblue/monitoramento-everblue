@@ -117,6 +117,46 @@ Chave do objeto gerada pelo sistema: `<prefixo>/<categoria>/<aaaa>/<mm>/<id>/v<n
 2. Leitura e validação no servidor; CNPJ repetido vai para a lista de erros.
 3. Prévia guardada por id; confirmação em transação com `FOR UPDATE` —
    segunda confirmação devolve `409`.
+4. **Qualidade do dado (1.1)**: texto em campo numérico recusa a linha (antes
+   virava 0); IL vazio ou "SEM BASE" é gravado como ausente (`NULL`); avisos
+   não bloqueantes na prévia — tranche/limite simbólico (≤ R$ 1.000), salto de
+   risco acima do limiar frente à posição anterior, documento novo.
+5. **Vários CNPJs por cliente (1.1)**: a célula aceita uma lista (`;` ou `,`);
+   o primeiro é o principal (`cliente.cnpj`); todos ficam em
+   `cliente_documento` (único por documento). O cliente é reconhecido por
+   qualquer um deles; documentos de clientes diferentes na mesma linha
+   recusam a linha.
+6. **Carteira (1.1)**: coluna opcional `Carteira`; carteira **apartada**
+   (ex.: QUATTUOR) fica fora do dashboard, da ata, da pauta e do painel da
+   diretoria, salvo filtro explícito.
+7. **Classificação semanal (1.1)**: na confirmação, cada cliente recebe
+   prioridade (1-Jurídico … 4-Normal, 9-apartada), enquadramento,
+   criticidade, tendência da liquidez e alertas — pelas regras da base do
+   comitê (`backend/dominio/src/regras/classificacao.ts`), com limiares em
+   `regra_classificacao` (Cadastros). Grava `classificacao_semanal`
+   (append-only) e atualiza prioridade/criticidade do cliente. Unidade de
+   análise: grupo econômico consolidado (`riscoGrupo`), como na base.
+   Conferência contra as 106 linhas da base de 24/09/2026: prioridade 106,
+   criticidade 106, alertas 105, tendência 105, enquadramento 100 (o
+   enquadramento da base tem julgamento manual em 6 casos).
+8. **Restritivos por tipo (1.1)**: colunas opcionais `Pefin (qtd)`,
+   `Pefin (R$)`, … ou lançamento na ficha; piora gera alerta e evento.
+
+## Comitê (1.1)
+
+- Plano com prazo vencido vira `ATRASADO` sozinho; andamento (feito / não
+  feito / prazo / responsável / concluir / reabrir) por `PATCH /api/v1/planos/:id`,
+  com evento e auditoria.
+- Pauta automática do próximo comitê (`GET /api/v1/comites/proximo/pauta`):
+  plano atrasado ou vencendo até a data do comitê, crítico, alerta vermelho
+  novo, piora de restritivos, mudança de status.
+- A ata traz, por cliente, status atual, praça de pagamento, evolução do
+  quadro restritivo e transacional (pareceres do checklist da semana do
+  comitê), decisões anterior e atual, plano, responsável, feito/não feito e a
+  classificação.
+- Painel semanal da diretoria (`GET /api/v1/dashboard/painel-semanal`):
+  críticos, vencido, consumo do limite e planos atrasados, com comparação à
+  semana anterior.
 
 ## Segurança
 

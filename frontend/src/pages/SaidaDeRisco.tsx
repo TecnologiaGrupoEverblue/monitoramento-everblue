@@ -95,7 +95,7 @@ export default function SaidaDeRisco() {
               <BarChart data={dadosGrafico} margin={{ left: 8, right: 16 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--cor-grade)" />
                 <XAxis dataKey="nome" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={70} />
-                <YAxis tickFormatter={(v) => formatarMoedaCompacta(v)} tick={{ fontSize: 11 }} />
+                <YAxis tickFormatter={(v) => formatarMoedaCompacta(v)} tick={{ fontSize: 11 }} width={84} />
                 <Tooltip formatter={(v) => formatarMoedaCompacta(Number(v))} />
                 <Legend />
                 <Bar dataKey="Risco na entrada" fill="var(--cor-inativo)" radius={[3, 3, 0, 0]} />

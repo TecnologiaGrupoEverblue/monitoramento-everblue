@@ -1,11 +1,15 @@
 import type { Cliente, FiltrosGlobais } from '../models/types'
 
+/** Carteira de quem não tem carteira gravada (dados anteriores à 1.1). */
+export const CARTEIRA_PADRAO_ID = 'car_everblue'
+
 export const FILTROS_VAZIOS: FiltrosGlobais = {
   semanaRef: null,
   plataformaId: null,
   gerenteId: null,
   clienteId: null,
   grupoEconomicoId: null,
+  carteiraId: null,
   status: null,
   prioridade: null,
   setor: null,
@@ -21,6 +25,7 @@ export function aplicarFiltrosClientes(clientes: Cliente[], filtros: FiltrosGlob
     if (filtros.gerenteId && c.gerenteId !== filtros.gerenteId) return false
     if (filtros.clienteId && c.id !== filtros.clienteId) return false
     if (filtros.grupoEconomicoId && c.grupoEconomicoId !== filtros.grupoEconomicoId) return false
+    if (filtros.carteiraId && (c.carteiraId ?? CARTEIRA_PADRAO_ID) !== filtros.carteiraId) return false
     if (filtros.status && c.status !== filtros.status) return false
     if (filtros.prioridade && c.prioridade !== filtros.prioridade) return false
     if (filtros.setor && c.setor !== filtros.setor) return false

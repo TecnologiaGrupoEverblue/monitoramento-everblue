@@ -66,6 +66,12 @@ export default function Topbar() {
       {aberto && (
         <div id="painel-filtros" className="sem-impressao sticky top-16 z-20 border-b border-white/10 bg-[#0a1030]/95 px-4 py-4 backdrop-blur-md sm:px-6 lg:px-8">
           <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <Select
+              label="Carteira"
+              valor={filtros.carteiraId ?? ''}
+              onChange={(v) => atualizarFiltro('carteiraId', v || null)}
+              opcoes={opcoes.carteiras.map((c) => ({ valor: c.id, label: c.apartada ? `${c.nome} (apartada)` : c.nome }))}
+            />
             <Select label="Plataforma" valor={filtros.plataformaId ?? ''} onChange={(v) => atualizarFiltro('plataformaId', v || null)} opcoes={opcoes.plataformas.map((p) => ({ valor: p.id, label: p.nome }))} />
             <Select label="Gerente" valor={filtros.gerenteId ?? ''} onChange={(v) => atualizarFiltro('gerenteId', v || null)} opcoes={opcoes.gerentes.map((g) => ({ valor: g.id, label: g.nome }))} />
             <Select label="Grupo econômico" valor={filtros.grupoEconomicoId ?? ''} onChange={(v) => atualizarFiltro('grupoEconomicoId', v || null)} opcoes={opcoes.grupos.map((g) => ({ valor: g.id, label: g.nome }))} />

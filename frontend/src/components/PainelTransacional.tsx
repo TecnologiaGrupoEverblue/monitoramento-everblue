@@ -100,7 +100,7 @@ export default function PainelTransacional({ clienteId }: { clienteId: string })
         <ComposedChart data={dadosGrafico} margin={{ left: 8, right: 8, top: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--cor-grade)" />
           <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-          <YAxis yAxisId="valores" tickFormatter={(v) => formatarMoedaCompacta(Number(v))} tick={{ fontSize: 10 }} width={70} />
+          <YAxis yAxisId="valores" tickFormatter={(v) => formatarMoedaCompacta(Number(v))} tick={{ fontSize: 10 }} width={80} />
           <YAxis yAxisId="qtd" orientation="right" tick={{ fontSize: 10 }} width={36} allowDecimals={false} />
           <Tooltip
             formatter={(v, nome) => (nome === 'Transações/mês' ? [String(v), nome] : [formatarMoeda(Number(v)), nome])}

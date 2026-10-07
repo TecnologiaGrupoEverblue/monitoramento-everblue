@@ -66,6 +66,10 @@ export interface AgregadosSemana {
   qtdCriticos: number
   qtdAtencao: number
   qtdClientes: number
+  /** Carteiras apartadas (ex.: QUATTUOR): fora dos totais acima, informadas à parte. */
+  riscoApartado: number
+  vencidoApartado: number
+  qtdApartados: number
 }
 
 export interface KPIsDashboard {
@@ -163,6 +167,12 @@ export interface ItemPreviewImportacao {
   percVencidoNovo: number
   aumentoVencido: boolean
   alertasGerados: AlertaGerado[]
+  /** Avisos de qualidade do dado (não bloqueiam a importação). */
+  avisos: string[]
+  /** Documentos da linha (o principal primeiro) e os que serão acrescentados ao cliente. */
+  documentos: string[]
+  documentosNovos: string[]
+  carteira: string | null
   linhaValidada: LinhaValidada
 }
 
@@ -186,6 +196,7 @@ export interface PreviewImportacao {
     totalNovosAlertas: number
     planosAtrasadosExistentes: number
     clientesComMudancaDeStatus: number
+    linhasComAviso: number
   }
 }
 
@@ -286,4 +297,67 @@ export interface PaginaArquivos {
 export interface TotaisArquivos {
   porFinalidade: Record<FinalidadeArquivo, { quantidade: number; bytes: number }>
   porSituacao: Record<SituacaoArquivo, number>
+}
+
+// ------------------------------------------------------------ comitê (1.1)
+
+export type MotivoPauta =
+  | 'PLANO_ATRASADO'
+  | 'PLANO_VENCE_ATE_COMITE'
+  | 'CRITICO'
+  | 'ALERTA_VERMELHO_NOVO'
+  | 'MUDANCA_STATUS'
+  | 'PIORA_RESTRITIVOS'
+  | 'JURIDICO_OU_SAIDA'
+
+export interface ItemPauta {
+  clienteId: string
+  nome: string
+  status: StatusCliente
+  criticidade: string | null
+  prioridadeOrdem: number | null
+  risco: number
+  motivos: { motivo: MotivoPauta; descricao: string }[]
+}
+
+export interface PautaComite {
+  comiteId: string
+  dataComite: string
+  /** Data do último comitê realizado: o que mudou "desde o último comitê" conta a partir dela. */
+  desde: string | null
+  itens: ItemPauta[]
+}
+
+export interface AndamentoPlano {
+  oQueFoiFeito?: string | null
+  oQueNaoFoiFeito?: string | null
+  concluir?: boolean
+  reabrir?: boolean
+  dataLimite?: string
+  responsavel?: string
+  justificativa?: string
+}
+
+// ------------------------------------------------------------ painel da diretoria (1.1)
+
+export interface PontoPainelSemanal {
+  semana: string
+  qtdCriticos: number
+  qtdAtencao: number
+  riscoCritico: number
+  vencido: number
+  percVencido: number
+  risco: number
+  limiteGlobal: number
+  percConsumoLimite: number
+  planosAtrasados: number
+  /** `false` quando a semana não tem classificação gravada (anterior à 1.1):
+   * a contagem de críticos vem do cadastro atual. */
+  classificada: boolean
+}
+
+export interface PainelSemanal {
+  serie: PontoPainelSemanal[]
+  atual: PontoPainelSemanal | null
+  anterior: PontoPainelSemanal | null
 }

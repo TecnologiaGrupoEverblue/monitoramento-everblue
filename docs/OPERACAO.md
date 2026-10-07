@@ -34,6 +34,24 @@ Ordem da subida (garantida pelo compose): `db` e `minio` saudáveis →
 ```
 
 Migrações novas são aplicadas pelo serviço `migracao` antes de a API subir.
+Na 1.1, o mesmo serviço classifica uma única vez a última posição já
+importada (se ainda não tiver classificação).
+
+Contêineres (1.1.1): healthchecks a cada 30 s com binário leve (`pg_isready`,
+`wget`/`busybox wget`), `init: true` na API e na migração, heap do Node a ~75%
+do limite (`--max-old-space-size`), `memswap_limit` igual ao limite de memória
+(sem swap no contêiner) e `no-new-privileges` em todos os serviços. O nginx tem
+verificação própria em `http://127.0.0.1/nginx-saude` (porta 80, sem redirecionar).
+
+Apresentação de valores (1.1.2): a partir de **R$ 1 milhão** todo valor em
+tela, ata, alerta e gráfico aparece em milhões com **3 casas decimais**
+(`R$ 14,665 mi`); abaixo disso, por extenso (`R$ 229.000`). A regra fica em
+`backend/dominio/src/utils/formatters.ts`. A exportação CSV continua com o
+número completo, para conferência e uso em planilha. Sem migração.
+
+Retenção (1.1): `atualizar.sh` mantém só as **3 versões mais recentes** em
+`releases/`; os scripts que gravam o `.env` mantêm só as **3 cópias
+`.env.bak-*` mais recentes**, todas com permissão 600.
 Migração já aplicada **não pode ser editada** (checksum): mudança de esquema é
 sempre um arquivo novo em `database/migrations`.
 

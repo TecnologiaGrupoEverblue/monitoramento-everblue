@@ -44,6 +44,15 @@ import {
   type SaidaDeRisco,
   type SessaoUsuario,
   type SnapshotSemanal,
+  type AndamentoPlano,
+  type Carteira,
+  type ClassificacaoSemanal,
+  type DocumentoCliente,
+  type LinhaRestritivo,
+  type PainelSemanal,
+  type PautaComite,
+  type RegraClassificacao,
+  type RestritivoSemanal,
 } from '@monitoramento/dominio'
 import { addDays, format } from 'date-fns'
 import { api, enviarComProgresso, requisitar } from '../api/cliente'
@@ -78,6 +87,8 @@ export const cadastrosRepository = {
   listarGrupos: () => api.get<GrupoEconomico[]>(`${V1}/cadastros/grupos`),
   listarGerentes: () => api.get<Gerente[]>(`${V1}/cadastros/gerentes`),
   listarPlataformas: () => api.get<Plataforma[]>(`${V1}/cadastros/plataformas`),
+  listarCarteiras: () => api.get<Carteira[]>(`${V1}/cadastros/carteiras`),
+  definirCarteiraApartada: (id: string, apartada: boolean) => api.patch<void>(`${V1}/cadastros/carteiras/${cod(id)}`, { apartada }),
   mapaGrupos: () => comoMapa(cadastrosRepository.listarGrupos()),
   mapaGerentes: () => comoMapa(cadastrosRepository.listarGerentes()),
   mapaPlataformas: () => comoMapa(cadastrosRepository.listarPlataformas()),
@@ -90,6 +101,18 @@ export const clienteRepository = {
   porId: (id: string) => api.get<Cliente>(`${V1}/clientes/${cod(id)}`).catch(() => null),
   listarEnriquecidos: (filtros: FiltrosGlobais) => api.get<ClienteEnriquecido[]>(`${V1}/clientes/enriquecidos`, consultaDe(filtros)),
   valoresDistintos: () => api.get<{ setores: string[]; ramos: string[]; produtos: string[] }>(`${V1}/clientes/valores-distintos`),
+  documentos: (id: string) => api.get<DocumentoCliente[]>(`${V1}/clientes/${cod(id)}/documentos`),
+}
+
+export const restritivoRepository = {
+  porCliente: (clienteId: string) => api.get<RestritivoSemanal[]>(`${V1}/restritivos/cliente/${cod(clienteId)}`),
+  gravar: (clienteId: string, semanaRef: string, linhas: (LinhaRestritivo & { observacao?: string | null })[]) =>
+    api.put<{ restritivos: RestritivoSemanal[]; pioras: string[]; alertaGerado: boolean }>(`${V1}/restritivos/${cod(clienteId)}/${cod(semanaRef)}`, { linhas }),
+}
+
+export const classificacaoRepository = {
+  porCliente: (clienteId: string) => api.get<ClassificacaoSemanal[]>(`${V1}/classificacoes/cliente/${cod(clienteId)}`),
+  porSemana: (semanaRef: string) => api.get<Record<string, ClassificacaoSemanal>>(`${V1}/classificacoes/semana/${cod(semanaRef)}`),
 }
 
 export const snapshotRepository = {
@@ -118,6 +141,7 @@ export const eventoRepository = {
 export const planoAcaoRepository = {
   listarTodos: () => api.get<PlanoAcao[]>(`${V1}/planos`),
   porCliente: (clienteId: string) => api.get<PlanoAcao[]>(`${V1}/planos/cliente/${cod(clienteId)}`),
+  registrarAndamento: (planoId: string, dados: AndamentoPlano) => api.patch<PlanoAcao>(`${V1}/planos/${cod(planoId)}`, dados),
 }
 
 // ------------------------------------------------------------------ carteira
@@ -151,6 +175,7 @@ export const dashboardRepository = {
   rankingPorDimensao: (filtros: FiltrosGlobais, dimensao: 'gerenteId' | 'plataformaId') =>
     api.get<RankingDimensao[]>(`${V1}/dashboard/ranking`, { ...consultaDe(filtros), dimensao }),
   clientesPorCriticidade: (filtros: FiltrosGlobais) => api.get<{ criticidade: string; qtd: number; clienteIds: string[] }[]>(`${V1}/dashboard/criticidade`, consultaDe(filtros)),
+  painelSemanal: (filtros: FiltrosGlobais) => api.get<PainelSemanal>(`${V1}/dashboard/painel-semanal`, consultaDe(filtros)),
   evolucaoEntradasSaidasMonitoramento: (filtros: FiltrosGlobais) =>
     api.get<{ semana: string; entradas: number; saidas: number }[]>(`${V1}/dashboard/entradas-saidas`, consultaDe(filtros)),
 }
@@ -205,6 +230,7 @@ export const checklistRepository = {
 export const comiteAtaRepository = {
   listarComites: () => api.get<Comite[]>(`${V1}/comites`),
   proximoComitePlanejado: () => api.get<Comite | null>(`${V1}/comites/proximo`),
+  pauta: () => api.get<PautaComite>(`${V1}/comites/proximo/pauta`),
   ultimaAtaRealizada: () => api.get<Ata | null>(`${V1}/comites/ultima-ata`),
   decisoesRegistradas: async (comiteId: string) => (await api.get<{ quantidade: number }>(`${V1}/comites/${cod(comiteId)}/decisoes`)).quantidade,
   gerarAta: (comiteId: string) => api.post<Ata>(`${V1}/comites/${cod(comiteId)}/ata`),
@@ -219,6 +245,8 @@ export const configRepository = {
   listarConfiguracoesAlerta: () => api.get<ConfiguracaoAlerta[]>(`${V1}/configuracoes/alertas`),
   atualizarConfiguracaoAlerta: (id: string, alteracoes: Pick<Partial<ConfiguracaoAlerta>, 'limiar' | 'ativo'>) =>
     api.patch<void>(`${V1}/configuracoes/alertas/${cod(id)}`, alteracoes),
+  listarRegras: () => api.get<RegraClassificacao[]>(`${V1}/configuracoes/regras`),
+  atualizarRegra: (chave: string, valor: number) => api.patch<void>(`${V1}/configuracoes/regras/${cod(chave)}`, { valor }),
 }
 
 // ------------------------------------------------------------------ importação semanal

@@ -1,5 +1,5 @@
-import { criticidadeCor, gravidadeCor, prioridadeCor, statusCor, statusPlanoCor } from '../../theme/colors'
-import { CRITICIDADE_LABEL, GRAVIDADE_LABEL, PRIORIDADE_LABEL, STATUS_LABEL, STATUS_PLANO_LABEL } from '../../utils/formatters'
+import { criticidadeClassificadaCor, criticidadeCor, enquadramentoCor, gravidadeCor, prioridadeCor, statusCor, statusPlanoCor } from '../../theme/colors'
+import { CRITICIDADE_LABEL, GRAVIDADE_LABEL, PRIORIDADE_LABEL, ROTULO_CRITICIDADE_CLASSIFICADA, ROTULO_ENQUADRAMENTO, STATUS_LABEL, STATUS_PLANO_LABEL } from '../../utils/formatters'
 
 /** Etiqueta de classificação — um carimbo retangular com borda à esquerda,
  * não uma pílula. É a mesma linguagem em qualquer lugar do sistema onde um
@@ -38,4 +38,14 @@ export function PrioridadeBadge({ prioridade }: { prioridade: string }) {
 export function StatusPlanoBadge({ status }: { status: string }) {
   const cor = statusPlanoCor[status] ?? statusPlanoCor.EM_DIA
   return <Badge texto={STATUS_PLANO_LABEL[status] ?? status} cor={cor.texto} fundo={cor.fundo} />
+}
+
+export function CriticidadeClassificadaBadge({ criticidade }: { criticidade: string }) {
+  const cor = criticidadeClassificadaCor[criticidade] ?? criticidadeClassificadaCor.REGULAR
+  return <Badge texto={(ROTULO_CRITICIDADE_CLASSIFICADA as Record<string, string>)[criticidade] ?? criticidade} cor={cor.texto} fundo={cor.fundo} />
+}
+
+export function EnquadramentoBadge({ enquadramento }: { enquadramento: string }) {
+  const cor = enquadramentoCor[enquadramento] ?? enquadramentoCor.ENQUADRADO
+  return <Badge texto={(ROTULO_ENQUADRAMENTO as Record<string, string>)[enquadramento] ?? enquadramento} cor={cor.texto} fundo={cor.fundo} />
 }

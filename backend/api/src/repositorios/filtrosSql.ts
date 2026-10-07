@@ -11,6 +11,7 @@ export function condicoesClientes(filtros: Partial<FiltrosGlobais>, parametros: 
   if (filtros.gerenteId) adicionar('gerente_id', filtros.gerenteId)
   if (filtros.clienteId) adicionar('id', filtros.clienteId)
   if (filtros.grupoEconomicoId) adicionar('grupo_economico_id', filtros.grupoEconomicoId)
+  if (filtros.carteiraId) adicionar('carteira_id', filtros.carteiraId)
   if (filtros.status) adicionar('status', filtros.status)
   if (filtros.prioridade) adicionar('prioridade', filtros.prioridade)
   if (filtros.setor) adicionar('setor', filtros.setor)

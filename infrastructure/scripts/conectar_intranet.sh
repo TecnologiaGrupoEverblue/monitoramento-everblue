@@ -19,15 +19,29 @@
 #   5. reimplanta e testa a chamada assinada (espera 403 SYSTEM_ACCESS_DENIED
 #      para uma identidade de teste — prova de que a ASSINATURA foi aceita).
 #
-# Uso:  sudo bash infrastructure/scripts/conectar_intranet.sh [--sem-implantar | --testar]
+# Uso:  sudo bash infrastructure/scripts/conectar_intranet.sh [--sem-implantar | --testar | --renovar]
 #   --sem-implantar  só grava o .env (usado antes de uma atualização de versão)
 #   --testar         só testa a chamada assinada com o que já está no .env
+#   --renovar        deriva a chave de novo mesmo que já exista (ex.: após
+#                    trocar o ACCESS_API_MASTER_SECRET na Intranet)
+# Com a chave já gravada (43 caracteres, mesmo Client ID e URL), as etapas 3 e
+# 4 são puladas: não é preciso entrar na VM da Intranet a cada atualização.
 #
 # Variáveis opcionais: INTRANET_SSH (everblue@192.168.0.250),
 #   INTRANET_ENV (/home/everblue/current/infrastructure/.env.docker),
 #   INTRANET_URL (https://intranet.grupoeverblue.com.br)
 # =============================================================================
 set -Eeuo pipefail
+
+# Cópia do .env antes de gravar: só o dono lê (600) e ficam apenas as 3 mais
+# recentes — cada cópia carrega os segredos, e cópia esquecida é vazamento.
+guardar_copia_env() {
+  local copia=".env.bak-$(date +%Y%m%d%H%M%S)"
+  cp -p .env "$copia" && chmod 600 "$copia"
+  chmod 600 .env.bak-* 2>/dev/null || true
+  ls -1t .env.bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f --
+  printf '%s' "$copia"
+}
 
 APP="${APP:-/opt/everblue-monitoramento/app}"
 INTRANET_SSH="${INTRANET_SSH:-everblue@192.168.0.250}"
@@ -51,7 +65,7 @@ erro()  { printf '\n\033[1;31mERRO:\033[0m %s\n' "$*" >&2; exit 1; }
 
 cd "$APP" 2>/dev/null || erro "$APP não encontrado."
 [[ -f .env ]] || erro ".env não encontrado em $APP."
-atual() { grep -E "^$1=" .env | head -1 | cut -d= -f2- | tr -d '\r'; }
+atual() { { grep -E "^$1=" .env || true; } | head -1 | cut -d= -f2- | tr -d '\r'; }
 gravar() { # CHAVE VALOR — o valor vai pelo ambiente, nunca pela linha de comando
   VAL="$2" awk -v k="$1" 'BEGIN{v=ENVIRON["VAL"]} index($0, k"=")==1 {if(!f) print k"="v; f=1; next} {print} END{if(!f) print k"="v}' .env > .env.novo \
     && cat .env.novo > .env && rm -f .env.novo
@@ -96,6 +110,16 @@ esac
 
 # ------------------------------------------------------------------ 3
 info "3/5 Chave exclusiva do Monitoramento (derivada NA Intranet)"
+CHAVE_ATUAL="$(atual DIRETORIO_INTEGRATION_SECRET)"
+CID_ATUAL="$(atual DIRETORIO_CLIENT_ID | tr '[:upper:]' '[:lower:]')"
+if [[ "$MODO" != --renovar && "$CHAVE_ATUAL" =~ ^[A-Za-z0-9_-]{43}$ && ( -z "$CID_ATUAL" || "$CID_ATUAL" == "$CLIENT_ID" ) && "$(atual DIRETORIO_URL)" == "$INTRANET_URL" ]]; then
+  unset CHAVE_ATUAL
+  ok "chave já configurada neste servidor — mantida (para gerar de novo: --renovar)"
+  info "4/5 Gravando no .env"
+  ok "nada a alterar"
+  if [[ "$MODO" == --sem-implantar ]]; then exit 0; fi
+else
+unset CHAVE_ATUAL
 echo "  Conectando em $INTRANET_SSH — digite a senha da VM da INTRANET quando pedir."
 REMOTO=$(cat <<EOS
 set -eu
@@ -111,8 +135,20 @@ B64="$(printf '%s' "$REMOTO" | base64 -w0)"
 USUARIO_SSH="${SUDO_USER:-$(id -un)}"
 SAIDA="$(sudo -u "$USUARIO_SSH" ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 "$INTRANET_SSH" "echo $B64 | base64 -d | bash" | tr -d '\r')" \
   || erro "Não foi possível entrar em $INTRANET_SSH (senha, usuário ou rede). Nada foi alterado."
+if [[ "$(grep -m1 '^erro=' <<<"$SAIDA" | cut -d= -f2)" == arquivo ]]; then
+  # O arquivo da Intranet é do root (comum depois de uma publicação dela).
+  # Lê com sudo NA Intranet; a chave vai para um arquivo temporário (600) no
+  # home do usuário lá, e uma segunda conexão a traz e apaga.
+  aviso "o usuário ${INTRANET_SSH%@*} não lê $INTRANET_ENV sem sudo — vou pedir a senha do sudo da INTRANET"
+  echo "  Digite a senha da VM da INTRANET (SSH) e, em seguida, a do sudo (a mesma)."
+  sudo -u "$USUARIO_SSH" ssh -t -o ConnectTimeout=15 "$INTRANET_SSH" "umask 077; echo $B64 | base64 -d > ~/.emon_derivar.sh && sudo -p '[sudo] senha do everblue da INTRANET: ' bash ~/.emon_derivar.sh > ~/.emon_derivada; r=\$?; rm -f ~/.emon_derivar.sh; exit \$r" \
+    || erro "Não foi possível ler $INTRANET_ENV na Intranet nem com sudo. Nada foi alterado."
+  echo "  Buscando a chave (senha da VM da INTRANET mais uma vez)."
+  SAIDA="$(sudo -u "$USUARIO_SSH" ssh -o ConnectTimeout=15 "$INTRANET_SSH" 'cat ~/.emon_derivada; rm -f ~/.emon_derivada' | tr -d '\r')" \
+    || erro "Não foi possível trazer a chave da Intranet. Nada foi alterado."
+fi
 case "$(grep -m1 '^erro=' <<<"$SAIDA" | cut -d= -f2)" in
-  arquivo) erro "Não consegui ler $INTRANET_ENV na Intranet com o usuário ${INTRANET_SSH%@*}. Nada foi alterado.";;
+  arquivo) erro "Não consegui ler $INTRANET_ENV na Intranet (nem com sudo). Confira o caminho do .env.docker da Intranet (INTRANET_ENV). Nada foi alterado.";;
   mestre)  erro "A Intranet ainda não tem ACCESS_API_MASTER_SECRET. Conclua antes a correção coordenada v20 da Intranet (Concluir-Configuracao.ps1). Nada foi alterado.";;
 esac
 DERIVADA="$(grep -m1 "^derivada=" <<<"$SAIDA" | cut -d= -f2- || true)"
@@ -127,8 +163,7 @@ fi
 
 # ------------------------------------------------------------------ 4
 info "4/5 Gravando no .env"
-COPIA=".env.bak-$(date +%Y%m%d%H%M%S)"
-cp -p .env "$COPIA"
+COPIA="$(guardar_copia_env)"
 gravar DIRETORIO_URL "$INTRANET_URL"
 gravar DIRETORIO_CLIENT_ID "$CLIENT_ID"
 gravar DIRETORIO_INTEGRATION_SECRET "$DERIVADA"
@@ -139,6 +174,7 @@ ok ".env atualizado (cópia anterior: $COPIA)"
 if [[ "$MODO" == --sem-implantar ]]; then
   ok "gravado; a implantação acontece na atualização de versão."
   exit 0
+fi
 fi
 
 # ------------------------------------------------------------------ 5

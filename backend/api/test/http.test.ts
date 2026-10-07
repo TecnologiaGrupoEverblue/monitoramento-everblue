@@ -91,7 +91,15 @@ describe.skipIf(!temBanco)('API HTTP', () => {
       headers: { cookie, origin: ORIGEM },
       payload: { parecer: 'Vencido sob controle', gravidade: 'AMARELO', gravidadeManual: true, atualizadoPor: 'Outra Pessoa' },
     })
-    expect(r.statusCode).toBe(204)
+    // Campo fora do contrato é recusado (schema estrito): ninguém escolhe o autor.
+    expect(r.statusCode).toBe(400)
+    const ok = await app.inject({
+      method: 'PUT',
+      url: `/api/v1/checklist/${clienteId}/2026-09-28/VENCIDOS`,
+      headers: { cookie, origin: ORIGEM },
+      payload: { parecer: 'Vencido sob controle', gravidade: 'AMARELO', gravidadeManual: true },
+    })
+    expect(ok.statusCode).toBe(204)
     const item = (await app.inject({ url: `/api/v1/checklist/${clienteId}/2026-09-28`, headers: { cookie } })).json().find((i: { item: string }) => i.item === 'VENCIDOS')
     expect(item).toMatchObject({ parecer: 'Vencido sob controle', gravidade: 'AMARELO', persistido: true, atualizadoPor: 'Pessoa analista' })
   })
@@ -124,16 +132,16 @@ describe.skipIf(!temBanco)('API HTTP', () => {
       )
     const csv = [cabecalho, valores(existente.nome, existente.cnpj), valores('Cliente Novo S.A.', '99.999.999/0001-99')].map((l) => l.map((v) => `"${v}"`).join(';')).join('\n')
     const limite = '----limite'
-    const corpo = `--${limite}\r\nContent-Disposition: form-data; name="semanaRef"\r\n\r\n2026-10-05\r\n--${limite}\r\nContent-Disposition: form-data; name="arquivo"; filename="posicao.csv"\r\nContent-Type: text/csv\r\n\r\n${csv}\r\n--${limite}--\r\n`
+    const corpo = `--${limite}\r\nContent-Disposition: form-data; name="semanaRef"\r\n\r\n2099-01-05\r\n--${limite}\r\nContent-Disposition: form-data; name="arquivo"; filename="posicao.csv"\r\nContent-Type: text/csv\r\n\r\n${csv}\r\n--${limite}--\r\n`
     const envio = await app.inject({ method: 'POST', url: '/api/v1/importacoes', headers: { cookie, origin: ORIGEM, 'content-type': `multipart/form-data; boundary=${limite}` }, payload: corpo })
     expect(envio.statusCode).toBe(200)
     const previa = envio.json()
     expect(previa.totais).toMatchObject({ clientesNovos: 1, clientesAtualizados: 1 })
     expect([...armazenamento.objetos.keys()][0]).toMatch(/^importados\/planilhas\/\d{4}\/\d{2}\/[0-9a-f-]+\.csv$/)
 
-    const ok = await app.inject({ method: 'POST', url: `/api/v1/importacoes/${previa.importacaoId}/confirmar`, headers: { cookie, origin: ORIGEM }, payload: { semanaRef: '2026-10-05' } })
+    const ok = await app.inject({ method: 'POST', url: `/api/v1/importacoes/${previa.importacaoId}/confirmar`, headers: { cookie, origin: ORIGEM }, payload: { semanaRef: '2099-01-05' } })
     expect(ok.json()).toMatchObject({ snapshotsGravados: 2, clientesCriados: 1 })
-    const dup = await app.inject({ method: 'POST', url: `/api/v1/importacoes/${previa.importacaoId}/confirmar`, headers: { cookie, origin: ORIGEM }, payload: { semanaRef: '2026-10-05' } })
+    const dup = await app.inject({ method: 'POST', url: `/api/v1/importacoes/${previa.importacaoId}/confirmar`, headers: { cookie, origin: ORIGEM }, payload: { semanaRef: '2099-01-05' } })
     expect(dup.statusCode).toBe(409)
     await expect(banco.pool.query(`UPDATE snapshot_semanal SET risco_cliente = 0`)).rejects.toThrow(/append-only/)
     await expect(banco.pool.query(`DELETE FROM auditoria`)).rejects.toThrow(/append-only/)
@@ -143,11 +151,26 @@ describe.skipIf(!temBanco)('API HTTP', () => {
     const cookie = await sessaoCom('analista')
     const limite = '----b'
     const corpo = Buffer.concat([
-      Buffer.from(`--${limite}\r\nContent-Disposition: form-data; name="semanaRef"\r\n\r\n2026-10-05\r\n--${limite}\r\nContent-Disposition: form-data; name="arquivo"; filename="planilha.xlsx"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      Buffer.from(`--${limite}\r\nContent-Disposition: form-data; name="semanaRef"\r\n\r\n2099-01-05\r\n--${limite}\r\nContent-Disposition: form-data; name="arquivo"; filename="planilha.xlsx"\r\nContent-Type: application/octet-stream\r\n\r\n`),
       Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01]),
       Buffer.from(`\r\n--${limite}--\r\n`),
     ])
     const r = await app.inject({ method: 'POST', url: '/api/v1/importacoes', headers: { cookie, origin: ORIGEM, 'content-type': `multipart/form-data; boundary=${limite}` }, payload: corpo })
     expect(r.statusCode).toBe(415)
+  })
+
+  it('limiar de regra: perfil comum é negado, valor incoerente é recusado e a auditoria guarda o anterior', async () => {
+    const analista = await sessaoCom('leitor')
+    const negado = await app.inject({ method: 'PATCH', url: '/api/v1/configuracoes/regras/VENCIDO_CRITICO_PERC', headers: { cookie: analista, origin: ORIGEM }, payload: { valor: 20 } })
+    expect(negado.statusCode).toBe(403)
+    const admin = await sessaoCom('admin')
+    const incoerente = await app.inject({ method: 'PATCH', url: '/api/v1/configuracoes/regras/IL30_CRITICO', headers: { cookie: admin, origin: ORIGEM }, payload: { valor: 90 } })
+    expect(incoerente.statusCode).toBe(422)
+    const extra = await app.inject({ method: 'PATCH', url: '/api/v1/configuracoes/regras/VENCIDO_CRITICO_PERC', headers: { cookie: admin, origin: ORIGEM }, payload: { valor: 20, unidade: 'R$' } })
+    expect(extra.statusCode).toBe(400)
+    const ok = await app.inject({ method: 'PATCH', url: '/api/v1/configuracoes/regras/VENCIDO_CRITICO_PERC', headers: { cookie: admin, origin: ORIGEM }, payload: { valor: 20, motivo: 'Comitê de 07/10' } })
+    expect(ok.statusCode).toBe(204)
+    const aud = (await banco.pool.query(`SELECT motivo, detalhes FROM auditoria WHERE acao = 'configuracao.regra' ORDER BY id DESC LIMIT 1`)).rows[0]
+    expect(aud).toMatchObject({ motivo: 'Comitê de 07/10', detalhes: { anterior: 30, novo: 20 } })
   })
 })

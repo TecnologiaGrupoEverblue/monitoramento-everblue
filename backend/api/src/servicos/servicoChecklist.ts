@@ -14,6 +14,7 @@ import type { ChecklistRepositorio } from '../repositorios/checklistRepositorio'
 import type { ClienteRepositorio } from '../repositorios/clienteRepositorio'
 import type { PlanoAcaoRepositorio } from '../repositorios/planoAcaoRepositorio'
 import type { SnapshotRepositorio } from '../repositorios/snapshotRepositorio'
+import type { RestritivoRepositorio } from '../repositorios/restritivoRepositorio'
 import type { ServicoCarteira } from './servicoCarteira'
 
 export class ServicoChecklist {
@@ -25,10 +26,11 @@ export class ServicoChecklist {
     private readonly carteira: CarteiraRepositorio,
     private readonly checklist: ChecklistRepositorio,
     private readonly servicoCarteira: ServicoCarteira,
+    private readonly restritivos: RestritivoRepositorio,
   ) {}
 
   async obter(clienteId: string, semanaRef: string): Promise<ItemChecklistView[]> {
-    const [cliente, serieCompleta, semanas, planos, alertas, juridico, salvos, analiseTransacional] = await Promise.all([
+    const [cliente, serieCompleta, semanas, planos, alertas, juridico, salvos, analiseTransacional, restritivos] = await Promise.all([
       this.clientes.porId(clienteId),
       this.snapshots.porCliente(clienteId),
       this.snapshots.semanasDisponiveis(),
@@ -37,6 +39,7 @@ export class ServicoChecklist {
       this.carteira.juridicoDoCliente(clienteId),
       this.checklist.salvos(clienteId, semanaRef),
       this.servicoCarteira.analiseTransacional(clienteId),
+      this.restritivos.atualEAnterior([clienteId], semanaRef),
     ])
     if (!cliente) return []
 
@@ -57,6 +60,10 @@ export class ServicoChecklist {
       alertas: alertas.filter((a) => a.status !== 'RESOLVIDO'),
       juridico,
       analiseTransacional,
+      restritivos: (() => {
+        const r = restritivos.get(clienteId)
+        return r?.atual ? { atual: r.atual.linhas, anterior: r.anterior?.linhas ?? null } : undefined
+      })(),
     })
     const salvosPorItem = new Map(salvos.map((s) => [s.item, s]))
     return sugestoes.map((sugestao) => {

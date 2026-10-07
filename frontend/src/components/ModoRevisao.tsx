@@ -9,7 +9,7 @@ import {
   semanaMesAnteriorRef,
   snapshotRepository,
 } from '../repositories'
-import { diasEntre, formatarData, formatarMoeda, formatarPercentual, STATUS_LABEL } from '../utils/formatters'
+import { diasEntre, formatarData, formatarMoeda, formatarPercentual, formatarPercentualOpcional, STATUS_LABEL } from '../utils/formatters'
 import ChecklistAnalise from './ChecklistAnalise'
 import PainelTransacional from './PainelTransacional'
 import { CriticidadeBadge, GravidadeBadge, PrioridadeBadge } from './ui/Badges'
@@ -210,7 +210,7 @@ export default function ModoRevisao({
             <div className="grid grid-cols-2 gap-3 border bg-[var(--cor-superficie-solida)] p-4 text-sm lg:col-span-2" style={{ borderColor: 'var(--cor-borda)' }}>
               <Fato titulo="Vencido oficial" valor={formatarMoeda(atual?.vencidoOficial ?? 0)} />
               <Fato titulo="% Vencido" valor={formatarPercentual(percVencido)} />
-              <Fato titulo="IL 30 / 90 dias" valor={`${formatarPercentual(atual?.il30 ?? 0)} / ${formatarPercentual(atual?.il90 ?? 0)}`} />
+              <Fato titulo="IL 30 / 90 dias" valor={`${formatarPercentualOpcional(atual?.il30)} / ${formatarPercentualOpcional(atual?.il90)}`} />
               <Fato titulo="Aging da carteira" valor={`${atual?.agingCarteiraDias ?? 0} dias`} />
               <Fato titulo="Atraso médio" valor={`${atual?.atrasoMedioDias ?? 0} dias`} />
               <Fato titulo="Restritivos" valor={String(atual?.restritivos ?? 0)} />

@@ -105,7 +105,19 @@ else
   aviso "verificação com falhas — veja $EVIDENCIA. Voltar: bash $RETORNAR"
 fi
 
+# Retenção: só as 3 versões guardadas mais recentes (cada uma tem cópia do
+# .env e da chave do certificado). A que acabou de sair é sempre uma delas.
+MANTER_RELEASES=3
+ANTIGAS="$(sudo bash -c "ls -1dt '$RELEASES'/app-* 2>/dev/null | tail -n +$((MANTER_RELEASES + 1))" || true)"
+if [[ -n "$ANTIGAS" ]]; then
+  while IFS= read -r antiga; do
+    [[ "$antiga" == "$RELEASES"/app-* && "$antiga" != "$GUARDADA" ]] || continue
+    sudo rm -rf -- "$antiga" && ok "versão antiga removida: $(basename "$antiga")"
+  done <<<"$ANTIGAS"
+fi
+# Cópias do .env dentro da instalação: 600 e só as 3 mais recentes.
+sudo bash -c "cd '$APP' && chmod 600 .env.bak-* 2>/dev/null; ls -1t .env.bak-* 2>/dev/null | tail -n +4 | xargs -r rm -f --" || true
+
 printf '\n\033[1;32mAtualizado: %s → %s.\033[0m\n' "$ATUAL" "$NOVA"
-echo "  Versões guardadas (caminho de volta):"
+echo "  Versões guardadas (caminho de volta; ficam as $MANTER_RELEASES mais recentes):"
 sudo bash -c "ls -1dt '$RELEASES'/app-* 2>/dev/null | xargs -r du -sh" | sed 's/^/    /' || true
-echo "  Para liberar espaço, remova as mais antigas manualmente (elas contêm cópia do .env)."

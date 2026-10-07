@@ -6,6 +6,13 @@
 import { format, startOfWeek } from 'date-fns'
 import {
   analisarMovimentoConta,
+  CARTEIRA_PADRAO_ID,
+  classificarCliente,
+  limiaresDe,
+  type ClassificacaoSemanal,
+  type PainelSemanal,
+  type PlanoAcao,
+  type PontoPainelSemanal,
   semanaAnteriorRef,
   semanaMesAnteriorRef,
   type AgregadosSemana,
@@ -28,6 +35,7 @@ import type { ClienteRepositorio } from '../repositorios/clienteRepositorio'
 import type { EventoRepositorio } from '../repositorios/eventoRepositorio'
 import type { PlanoAcaoRepositorio } from '../repositorios/planoAcaoRepositorio'
 import type { SnapshotRepositorio } from '../repositorios/snapshotRepositorio'
+import type { ClassificacaoRepositorio } from '../repositorios/classificacaoRepositorio'
 
 const AGREGADOS_VAZIOS: AgregadosSemana = {
   risco: 0,
@@ -46,6 +54,9 @@ const AGREGADOS_VAZIOS: AgregadosSemana = {
   qtdCriticos: 0,
   qtdAtencao: 0,
   qtdClientes: 0,
+  riscoApartado: 0,
+  vencidoApartado: 0,
+  qtdApartados: 0,
 }
 
 const ROTULO_STATUS: Record<string, string> = { NORMAL: 'Normal', MONITORAMENTO: 'Monitoramento', SAIDA_DE_RISCO: 'Saída de Risco', JURIDICO: 'Jurídico' }
@@ -94,7 +105,17 @@ export class ServicoCarteira {
     private readonly planos: PlanoAcaoRepositorio,
     private readonly eventos: EventoRepositorio,
     private readonly carteira: CarteiraRepositorio,
+    private readonly classificacoes: ClassificacaoRepositorio,
   ) {}
+
+  /** Clientes que entram nos indicadores: carteiras apartadas (ex.: QUATTUOR)
+   * ficam de fora, salvo quando a própria carteira foi filtrada. */
+  private async clientesDosIndicadores(filtros: Partial<FiltrosGlobais>): Promise<{ incluidos: Cliente[]; apartados: Cliente[] }> {
+    const [todos, apartadas] = await Promise.all([this.clientes.listar(filtros), this.cadastros.idsCarteirasApartadas()])
+    if (filtros.carteiraId) return { incluidos: todos, apartados: [] }
+    const ehApartado = (c: Cliente) => apartadas.has(c.carteiraId ?? CARTEIRA_PADRAO_ID)
+    return { incluidos: todos.filter((c) => !ehApartado(c)), apartados: todos.filter(ehApartado) }
+  }
 
   private async semanaDeReferencia(filtros: Partial<FiltrosGlobais>) {
     const semanas = await this.snapshots.semanasDisponiveis()
@@ -147,31 +168,43 @@ export class ServicoCarteira {
   }
 
   async obterKPIs(filtros: Partial<FiltrosGlobais>): Promise<KPIsDashboard> {
-    const [{ semanas, semanaRef }, todos] = await Promise.all([this.semanaDeReferencia(filtros), this.clientes.listar(filtros)])
+    const [{ semanas, semanaRef }, { incluidos, apartados }] = await Promise.all([this.semanaDeReferencia(filtros), this.clientesDosIndicadores(filtros)])
     const semanaAnterior = semanaRef ? semanaAnteriorRef(semanas, semanaRef) : null
     const semanaMesAnterior = semanaRef ? semanaMesAnteriorRef(semanas, semanaRef) : null
-    const clientes = apenasMonitorados(todos)
+    const clientes = apenasMonitorados(incluidos)
     const mapas = await this.mapaSnapshots([semanaRef, semanaAnterior, semanaMesAnterior])
     const vazio = new Map<string, SnapshotSemanal>()
+    const comApartados = (ag: AgregadosSemana, mapa: Map<string, SnapshotSemanal>): AgregadosSemana => {
+      for (const c of apartados) {
+        const snap = mapa.get(c.id)
+        if (!snap) continue
+        ag.riscoApartado += snap.riscoCliente
+        ag.vencidoApartado += snap.vencidoOficial
+        ag.qtdApartados += 1
+      }
+      return ag
+    }
+    const mapaAtual = (semanaRef && mapas.get(semanaRef)) || vazio
+    const mapaAnterior = (semanaAnterior && mapas.get(semanaAnterior)) || vazio
     return {
       semanaRef,
       semanaAnterior,
       semanaMesAnterior,
-      atual: agregar(clientes, (semanaRef && mapas.get(semanaRef)) || vazio),
-      anterior: agregar(clientes, (semanaAnterior && mapas.get(semanaAnterior)) || vazio),
+      atual: comApartados(agregar(clientes, mapaAtual), mapaAtual),
+      anterior: comApartados(agregar(clientes, mapaAnterior), mapaAnterior),
       mesAnterior: semanaMesAnterior ? agregar(clientes, mapas.get(semanaMesAnterior) ?? vazio) : null,
     }
   }
 
   async serieEvolucaoSemanal(filtros: Partial<FiltrosGlobais>): Promise<{ semana: string; risco: number; vencido: number }[]> {
-    const clientes = apenasMonitorados(await this.clientes.listar(filtros))
+    const clientes = apenasMonitorados((await this.clientesDosIndicadores(filtros)).incluidos)
     return this.snapshots.serieAgregada(clientes.map((c) => c.id))
   }
 
   async riscoPorDimensao(filtros: Partial<FiltrosGlobais>, dimensao: DimensaoRisco): Promise<RiscoPorDimensaoItem[]> {
-    const [{ semanaRef }, clientes, gerentes, plataformas, grupos] = await Promise.all([
+    const [{ semanaRef }, { incluidos: clientes }, gerentes, plataformas, grupos] = await Promise.all([
       this.semanaDeReferencia(filtros),
-      this.clientes.listar(filtros),
+      this.clientesDosIndicadores(filtros),
       this.cadastros.listarGerentes(),
       this.cadastros.listarPlataformas(),
       this.cadastros.listarGrupos(),
@@ -204,9 +237,9 @@ export class ServicoCarteira {
 
   /** Ranking por gerente ou plataforma — carteira, risco por status, vencido e planos. */
   async rankingPorDimensao(filtros: Partial<FiltrosGlobais>, dimensao: 'gerenteId' | 'plataformaId'): Promise<RankingDimensao[]> {
-    const [{ semanaRef }, clientes, gerentes, plataformas, planos] = await Promise.all([
+    const [{ semanaRef }, { incluidos: clientes }, gerentes, plataformas, planos] = await Promise.all([
       this.semanaDeReferencia(filtros),
-      this.clientes.listar(filtros),
+      this.clientesDosIndicadores(filtros),
       this.cadastros.listarGerentes(),
       this.cadastros.listarPlataformas(),
       this.planos.listarTodos(),
@@ -268,14 +301,14 @@ export class ServicoCarteira {
   }
 
   async clientesPorCriticidade(filtros: Partial<FiltrosGlobais>): Promise<{ criticidade: string; qtd: number; clienteIds: string[] }[]> {
-    const clientes = await this.clientes.listar(filtros)
+    const clientes = (await this.clientesDosIndicadores(filtros)).incluidos
     const grupos: Record<string, string[]> = { NORMAL: [], ATENCAO: [], CRITICA: [] }
     for (const c of clientes) grupos[c.criticidade].push(c.id)
     return Object.entries(grupos).map(([criticidade, ids]) => ({ criticidade, qtd: ids.length, clienteIds: ids }))
   }
 
   async evolucaoEntradasSaidasMonitoramento(filtros: Partial<FiltrosGlobais>): Promise<{ semana: string; entradas: number; saidas: number }[]> {
-    const [semanas, clientes] = await Promise.all([this.snapshots.semanasDisponiveis(), this.clientes.listar(filtros)])
+    const [semanas, { incluidos: clientes }] = await Promise.all([this.snapshots.semanasDisponiveis(), this.clientesDosIndicadores(filtros)])
     const eventos = await this.eventos.mudancasDeStatus(clientes.map((c) => c.id))
     const contagem = new Map(semanas.map((s) => [s, { entradas: 0, saidas: 0 }]))
     for (const evento of eventos) {
@@ -286,6 +319,82 @@ export class ServicoCarteira {
       if (evento.valorAnterior === 'MONITORAMENTO' && evento.valorNovo !== 'MONITORAMENTO') bucket.saidas += 1
     }
     return semanas.map((semana) => ({ semana, ...(contagem.get(semana) ?? { entradas: 0, saidas: 0 }) }))
+  }
+
+  /**
+   * Painel semanal da diretoria: críticos, vencido, consumo do limite e planos
+   * atrasados, semana a semana, sobre a carteira Everblue inteira (apartadas
+   * fora). Semanas sem classificação gravada (anteriores à 1.1) são
+   * classificadas na hora, com as regras atuais.
+   */
+  async painelSemanal(filtros: Partial<FiltrosGlobais>, quantidadeSemanas = 12): Promise<PainelSemanal> {
+    const [semanasTodas, { incluidos }, planos, regras] = await Promise.all([
+      this.snapshots.semanasDisponiveis(),
+      this.clientesDosIndicadores(filtros),
+      this.planos.listarTodos(),
+      this.classificacoes.listarRegras(),
+    ])
+    const ate = filtros.semanaRef ? semanasTodas.filter((s) => s <= filtros.semanaRef!) : semanasTodas
+    const semanas = ate.slice(-quantidadeSemanas)
+    if (semanas.length === 0) return { serie: [], atual: null, anterior: null }
+    // Uma semana antes da janela, para classificar a primeira na hora.
+    const idxPrimeira = semanasTodas.indexOf(semanas[0])
+    const semanaBase = idxPrimeira > 0 ? semanasTodas[idxPrimeira - 1] : null
+    const ids = new Set(incluidos.map((c) => c.id))
+    const [snaps, gravadas] = await Promise.all([
+      this.snapshots.porSemanas(semanaBase ? [semanaBase, ...semanas] : semanas, [...ids]),
+      this.classificacoes.porSemanas(semanas),
+    ])
+    const porSemana = new Map<string, Map<string, SnapshotSemanal>>()
+    for (const s of snaps) {
+      const m = porSemana.get(s.semanaRef) ?? new Map<string, SnapshotSemanal>()
+      m.set(s.clienteId, s)
+      porSemana.set(s.semanaRef, m)
+    }
+    const classPorSemana = new Map<string, Map<string, ClassificacaoSemanal>>()
+    for (const c of gravadas) {
+      if (!ids.has(c.clienteId)) continue
+      const m = classPorSemana.get(c.semanaRef) ?? new Map<string, ClassificacaoSemanal>()
+      m.set(c.clienteId, c)
+      classPorSemana.set(c.semanaRef, m)
+    }
+    const lim = limiaresDe(regras)
+    const clientesPorId = new Map(incluidos.map((c) => [c.id, c]))
+
+    const serie: PontoPainelSemanal[] = semanas.map((semana, i) => {
+      const mapa = porSemana.get(semana) ?? new Map<string, SnapshotSemanal>()
+      const anterior = porSemana.get(i > 0 ? semanas[i - 1] : (semanaBase ?? '')) ?? new Map<string, SnapshotSemanal>()
+      const gravadasSemana = classPorSemana.get(semana)
+      const ponto: PontoPainelSemanal = {
+        semana,
+        qtdCriticos: 0,
+        qtdAtencao: 0,
+        riscoCritico: 0,
+        vencido: 0,
+        percVencido: 0,
+        risco: 0,
+        limiteGlobal: 0,
+        percConsumoLimite: 0,
+        planosAtrasados: planosAtrasadosEm(planos.filter((p) => ids.has(p.clienteId)), semana),
+        classificada: Boolean(gravadasSemana && gravadasSemana.size > 0),
+      }
+      for (const [clienteId, snap] of mapa) {
+        ponto.risco += snap.riscoCliente
+        ponto.vencido += snap.vencidoOficial
+        ponto.limiteGlobal += snap.limiteGlobal
+        const c =
+          gravadasSemana?.get(clienteId)?.criticidade ??
+          classificarCliente({ status: clientesPorId.get(clienteId)!.status, carteiraApartada: false, atual: snap, anterior: anterior.get(clienteId) ?? null }, lim).criticidade
+        if (c === 'CRITICO') {
+          ponto.qtdCriticos += 1
+          ponto.riscoCritico += snap.riscoCliente
+        } else if (c === 'ATENCAO') ponto.qtdAtencao += 1
+      }
+      ponto.percVencido = ponto.risco > 0 ? Number(((ponto.vencido / ponto.risco) * 100).toFixed(2)) : 0
+      ponto.percConsumoLimite = ponto.limiteGlobal > 0 ? Number(((ponto.risco / ponto.limiteGlobal) * 100).toFixed(2)) : 0
+      return ponto
+    })
+    return { serie, atual: serie[serie.length - 1] ?? null, anterior: serie.length > 1 ? serie[serie.length - 2] : null }
   }
 
   async iasrComEventos(): Promise<RegistroIasrComEventos[]> {
@@ -342,4 +451,15 @@ export function agruparPor<T>(lista: T[], chave: (item: T) => string): Map<strin
     else mapa.set(k, [item])
   }
   return mapa
+}
+
+/** Planos que estavam atrasados na data: decididos até ela, com prazo antes
+ * dela e não concluídos até ela. Concluído sem data de conclusão (anterior à
+ * 1.1) conta como concluído. */
+export function planosAtrasadosEm(planos: PlanoAcao[], data: string): number {
+  return planos.filter((p) => {
+    if (p.dataDecisaoAtual > data || p.dataLimite >= data) return false
+    if (p.status !== 'CONCLUIDO') return true
+    return Boolean(p.concluidoEm && p.concluidoEm.slice(0, 10) > data)
+  }).length
 }

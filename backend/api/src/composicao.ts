@@ -23,6 +23,10 @@ import { ConfiguracaoRepositorio } from './repositorios/configuracaoRepositorio'
 import { EventoRepositorio } from './repositorios/eventoRepositorio'
 import { ImportacaoRepositorio } from './repositorios/importacaoRepositorio'
 import { PlanoAcaoRepositorio } from './repositorios/planoAcaoRepositorio'
+import { RestritivoRepositorio } from './repositorios/restritivoRepositorio'
+import { ClassificacaoRepositorio } from './repositorios/classificacaoRepositorio'
+import { ServicoPlanos } from './servicos/servicoPlanos'
+import { ServicoRestritivos } from './servicos/servicoRestritivos'
 import { SnapshotRepositorio } from './repositorios/snapshotRepositorio'
 import { UsuarioRepositorio } from './repositorios/usuarioRepositorio'
 import { Cofre } from './seguranca/cofre'
@@ -61,6 +65,8 @@ export interface Dependencias {
     comites: ComiteRepositorio
     configuracoes: ConfiguracaoRepositorio
     checklist: ChecklistRepositorio
+    restritivos: RestritivoRepositorio
+    classificacoes: ClassificacaoRepositorio
   }
   servicos: {
     carteira: ServicoCarteira
@@ -70,6 +76,8 @@ export interface Dependencias {
     importacao: ServicoImportacao
     arquivos: ServicoArquivos
     exportacao: ServicoExportacao
+    planos: ServicoPlanos
+    restritivos: ServicoRestritivos
   }
 }
 
@@ -92,6 +100,8 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
     comites: new ComiteRepositorio(db),
     configuracoes: new ConfiguracaoRepositorio(db),
     checklist: new ChecklistRepositorio(db),
+    restritivos: new RestritivoRepositorio(db),
+    classificacoes: new ClassificacaoRepositorio(db),
   }
 
   const entra = new AutenticadorEntra(cfg)
@@ -105,11 +115,14 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
 
   const arquivoRepositorio = new ArquivoRepositorio(db)
   const arquivos = new ServicoArquivos(banco, armazenamento, arquivoRepositorio, repos.auditoria, cfg.arquivos)
-  const carteira = new ServicoCarteira(repos.clientes, repos.snapshots, repos.cadastros, repos.alertas, repos.planos, repos.eventos, repos.carteira)
-  const comite = new ServicoComite(banco, repos.comites, repos.planos, repos.clientes, repos.alertas, repos.snapshots, repos.cadastros, carteira)
+  const carteira = new ServicoCarteira(repos.clientes, repos.snapshots, repos.cadastros, repos.alertas, repos.planos, repos.eventos, repos.carteira, repos.classificacoes)
+  const comite = new ServicoComite(
+    banco, repos.comites, repos.planos, repos.clientes, repos.alertas, repos.snapshots, repos.cadastros, carteira,
+    repos.classificacoes, repos.checklist, repos.eventos, repos.restritivos,
+  )
   const servicos = {
     carteira,
-    checklist: new ServicoChecklist(repos.clientes, repos.snapshots, repos.planos, repos.alertas, repos.carteira, repos.checklist, carteira),
+    checklist: new ServicoChecklist(repos.clientes, repos.snapshots, repos.planos, repos.alertas, repos.carteira, repos.checklist, carteira, repos.restritivos),
     comite,
     decisao: new ServicoDecisao(banco, repos.planos, repos.eventos, repos.clientes, repos.auditoria, () => comite.garantirProximoPlanejado()),
     importacao: new ServicoImportacao(
@@ -126,7 +139,11 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
       repos.alertas,
       repos.auditoria,
       cfg.importacao,
+      repos.restritivos,
+      repos.classificacoes,
     ),
+    planos: new ServicoPlanos(banco, repos.planos, repos.eventos, repos.auditoria),
+    restritivos: new ServicoRestritivos(banco, repos.restritivos, repos.clientes, repos.eventos, repos.alertas, repos.configuracoes, repos.auditoria, repos.snapshots),
     arquivos,
     // Exportações registradas: para uma nova, basta acrescentar aqui.
     exportacao: new ServicoExportacao(arquivos, [

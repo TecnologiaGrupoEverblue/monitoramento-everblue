@@ -1,6 +1,7 @@
 import type { Alerta, ChaveItemChecklist, Cliente, Gravidade, Juridico, PlanoAcao, SnapshotSemanal, StatusPlano } from '../models/types'
 import { diasEntre, formatarMoeda, formatarPercentual } from '../utils/formatters'
 import type { AnaliseTransacional } from './motorTransacional'
+import { compararRestritivos, descreverVariacao, totalRestritivos, type LinhaRestritivo } from './restritivos'
 
 /**
  * Checklist de Análise Semanal — roteiro ponto a ponto que o executivo
@@ -13,6 +14,7 @@ import type { AnaliseTransacional } from './motorTransacional'
  * a ordem "oficial" do roteiro continua em ITENS_CHECKLIST.
  */
 export const ITENS_CHECKLIST: { chave: ChaveItemChecklist; label: string }[] = [
+  { chave: 'SITUACAO_ATUAL', label: 'Status atual do cliente (o que mudou na semana)' },
   { chave: 'RISCO_MENSAL', label: 'Risco Mensal' },
   { chave: 'LIMITE_CONSUMIDO', label: 'Limite Consumido' },
   { chave: 'TRANCHE_CONSUMIDA', label: 'Tranche Consumida' },
@@ -36,7 +38,7 @@ export const GRUPOS_CHECKLIST: { titulo: string; itens: ChaveItemChecklist[] }[]
   { titulo: 'Exposição & Limite', itens: ['RISCO_MENSAL', 'LIMITE_CONSUMIDO', 'TRANCHE_CONSUMIDA', 'RISCO_POR_PRODUTO'] },
   { titulo: 'Inadimplência', itens: ['VENCIDOS', 'VENCIDOS_DESDE_QUANDO', 'PRAZO_MEDIO_CARTEIRA', 'AGING_CARTEIRA', 'COMPORTAMENTO_CALENDARIO'] },
   { titulo: 'Liquidez & Performance', itens: ['LIQUIDEZ_15_30_60', 'MANIFESTOS', 'EVOLUCAO_RESTRITIVOS', 'PRACA_PAGAMENTO'] },
-  { titulo: 'Governança', itens: ['PLANO_ACAO_NOVA_DECISAO', 'EVENTOS', 'DADOS_TRANSACIONAIS_CONTA_MOVIMENTO', 'PARECER_JURIDICO'] },
+  { titulo: 'Governança', itens: ['SITUACAO_ATUAL', 'PLANO_ACAO_NOVA_DECISAO', 'EVENTOS', 'DADOS_TRANSACIONAIS_CONTA_MOVIMENTO', 'PARECER_JURIDICO'] },
 ]
 
 export type StatusJuridicoResumo = 'EM_ANDAMENTO' | 'ACORDO' | 'ENCERRADO' | 'ATENCAO_PREVENTIVA' | 'SEM_PROCESSO'
@@ -71,6 +73,8 @@ interface ParametrosSugestao {
   alertas: Alerta[]
   juridico: Juridico | null
   analiseTransacional: AnaliseTransacional | null
+  /** Restritivos por tipo da semana e da anterior (quando houver). */
+  restritivos?: { atual: LinhaRestritivo[]; anterior: LinhaRestritivo[] | null }
 }
 
 const SEM_DADO: SugestaoChecklist['gravidade'] = 'AMARELO'
@@ -81,7 +85,7 @@ const SEM_DADO: SugestaoChecklist['gravidade'] = 'AMARELO'
  * (praça de pagamento, dados transacionais) voltam com um aviso pedindo o
  * preenchimento manual, em vez de fingir um "verde" que não foi checado. */
 export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[] {
-  const { cliente, snapshotAtual: s, snapshotAnterior: ant, snapshotMesAnterior: mes, serieRecente, planos, alertas, juridico, analiseTransacional } = params
+  const { cliente, snapshotAtual: s, snapshotAnterior: ant, snapshotMesAnterior: mes, serieRecente, planos, alertas, juridico, analiseTransacional, restritivos } = params
 
   if (!s) {
     return ITENS_CHECKLIST.map(({ chave }) => ({ item: chave, gravidade: 'AMARELO', resumo: 'Sem posição da carteira para esta semana ainda.' }))
@@ -89,6 +93,9 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
 
   const percVencido = s.riscoCliente > 0 ? (s.vencidoOficial / s.riscoCliente) * 100 : 0
   const resultado: SugestaoChecklist[] = []
+
+  // 0. Status atual — sempre texto do executivo (o "Satus Atual" da base do comitê).
+  resultado.push({ item: 'SITUACAO_ATUAL', gravidade: SEM_DADO, resumo: 'Registrar o status atual do cliente: o que mudou na semana, contatos feitos e providências.' })
 
   // 1. Risco Mensal
   const serieRisco = serieRecente.map((snap) => snap.riscoCliente)
@@ -185,15 +192,15 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
   // 8. Liquidez 15/30/60
   resultado.push({
     item: 'LIQUIDEZ_15_30_60',
-    gravidade: s.il30 < 60 ? 'VERMELHO' : s.il30 < 80 ? 'AMARELO' : 'VERDE',
-    resumo: `IL 30 dias em ${formatarPercentual(s.il30)} (IL 60: ${formatarPercentual(s.il60)}). Liquidado no período: ${formatarMoeda(s.liquidadoNoPeriodo)}${s.recompras > 0 ? ` · Recompras: ${formatarMoeda(s.recompras)} (${s.motivoRecompra ?? 'motivo não informado'})` : ''}.`,
+    gravidade: s.il30 === null ? 'AMARELO' : s.il30 < 60 ? 'VERMELHO' : s.il30 < 80 ? 'AMARELO' : 'VERDE',
+    resumo: `${s.il30 === null ? 'IL 30 dias sem base' : `IL 30 dias em ${formatarPercentual(s.il30)}`} (IL 60: ${s.il60 === null ? 'sem base' : formatarPercentual(s.il60)}). Liquidado no período: ${formatarMoeda(s.liquidadoNoPeriodo)}${s.recompras > 0 ? ` · Recompras: ${formatarMoeda(s.recompras)} (${s.motivoRecompra ?? 'motivo não informado'})` : ''}.`,
     dado: {
       tipo: 'percentuais',
       itens: [
         { label: 'IL 30', valor: s.il30 },
         { label: 'IL 60', valor: s.il60 },
         { label: 'IL 90', valor: s.il90 },
-      ],
+      ].filter((i): i is { label: string; valor: number } => i.valor !== null && i.valor !== undefined),
     },
   })
 
@@ -209,7 +216,7 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
   resultado.push({
     item: 'MANIFESTOS',
     gravidade: s.manifestoLastroInconsistente > 0 ? 'VERMELHO' : totalManifestos > 0 ? 'AMARELO' : 'VERDE',
-    resumo: totalManifestos > 0 ? `R$ ${totalManifestos.toLocaleString('pt-BR')} em problemas de manifesto (${formatarPercentual(s.manifestoPercSemAtuacao)} sem atuação).` : 'Sem problemas de manifesto na semana.',
+    resumo: totalManifestos > 0 ? `${formatarMoeda(totalManifestos)} em problemas de manifesto (${formatarPercentual(s.manifestoPercSemAtuacao)} sem atuação).` : 'Sem problemas de manifesto na semana.',
     dado:
       manifestos.length > 0
         ? { tipo: 'categorias', itens: manifestos.map((m) => ({ ...m, exibicao: formatarMoeda(m.valor), cor: (m.label === 'Lastro inconsistente' ? 'VERMELHO' : 'AMARELO') as Gravidade })) }
@@ -236,12 +243,30 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
   // 11. Evolução de Restritivos
   const serieRestritivos = serieRecente.map((snap) => snap.restritivos)
   const restritivosNovos = ant ? s.restritivos - ant.restritivos : 0
-  resultado.push({
-    item: 'EVOLUCAO_RESTRITIVOS',
-    gravidade: restritivosNovos > 0 ? 'VERMELHO' : s.restritivos > 0 ? 'AMARELO' : 'VERDE',
-    resumo: restritivosNovos > 0 ? `${restritivosNovos} novo(s) restritivo(s) esta semana (total: ${s.restritivos}).` : s.restritivos > 0 ? `${s.restritivos} restritivo(s) em aberto, sem novidade na semana.` : 'Sem restritivos.',
-    dado: { tipo: 'tendencia', serie: serieRestritivos, variacaoPerc: ant && ant.restritivos > 0 ? (restritivosNovos / ant.restritivos) * 100 : null },
-  })
+  if (restritivos && restritivos.atual.length > 0) {
+    const variacoes = compararRestritivos(restritivos.atual, restritivos.anterior)
+    const pioras = variacoes.filter((v) => v.piorou)
+    const total = totalRestritivos(restritivos.atual)
+    resultado.push({
+      item: 'EVOLUCAO_RESTRITIVOS',
+      gravidade: pioras.length > 0 ? 'VERMELHO' : total.quantidade > 0 ? 'AMARELO' : 'VERDE',
+      resumo:
+        pioras.length > 0
+          ? `Piora no quadro restritivo: ${pioras.map(descreverVariacao).join('; ')}.`
+          : `${total.quantidade} ocorrência(s), ${formatarMoeda(total.valor)}${restritivos.anterior ? ' — sem piora frente à semana anterior' : ''}.`,
+      dado: {
+        tipo: 'categorias',
+        itens: variacoes.map((v) => ({ label: v.label, valor: v.valorAtual, exibicao: `${v.quantidadeAtual} · ${formatarMoeda(v.valorAtual)}`, ...(v.piorou ? { cor: 'VERMELHO' as const } : {}) })),
+      },
+    })
+  } else {
+    resultado.push({
+      item: 'EVOLUCAO_RESTRITIVOS',
+      gravidade: restritivosNovos > 0 ? 'VERMELHO' : s.restritivos > 0 ? 'AMARELO' : 'VERDE',
+      resumo: restritivosNovos > 0 ? `${restritivosNovos} novo(s) restritivo(s) esta semana (total: ${s.restritivos}).` : s.restritivos > 0 ? `${s.restritivos} restritivo(s) em aberto, sem novidade na semana.` : 'Sem restritivos.',
+      dado: { tipo: 'tendencia', serie: serieRestritivos, variacaoPerc: ant && ant.restritivos > 0 ? (restritivosNovos / ant.restritivos) * 100 : null },
+    })
+  }
 
   // 12. Aging da Carteira
   resultado.push({
