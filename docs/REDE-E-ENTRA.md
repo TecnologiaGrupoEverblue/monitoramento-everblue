@@ -135,14 +135,18 @@ sudo bash infrastructure/scripts/conectar_intranet.sh --testar
 | `401 INTERNAL_AUTH_EXPIRED` | Relógios com mais de 90 s de diferença | Conferir NTP nas duas VMs |
 | `503 INTERNAL_AUTH_CONFIGURATION_MISSING` | Intranet sem segredo mestre | Concluir a correção coordenada v20 da Intranet |
 
-**Certificado da Intranet.** `intranet.grupoeverblue.com.br` usa certificado da
-AC interna **Everblue Intranet Root CA v2** (PKI Everblue v2), que não está no
-repositório público de raízes. A raiz pública vai no pacote
-(`infrastructure/confianca/intranet-raiz-v2.pem`, SHA-256 `A6:3C:3A:FB:…:E7:63:50`)
-e entra na API por `NODE_EXTRA_CA_CERTS` — soma-se às raízes públicas, a
-verificação TLS continua ligada e nunca se usa `-k`. O `conectar_intranet.sh`
-confere a impressão digital antes de usar a raiz. Na rotação da raiz da
-Intranet, trocar esse arquivo e a impressão digital no roteiro.
+**Certificado da Intranet.** Desde 10/2026, `intranet.grupoeverblue.com.br`
+usa certificado da **Everblue Corporate Root CA v1** (SHA-256
+`27681A80…2E59B7E9`, válida até 03/10/2036), que não está no repositório
+público de raízes. O `confiar_ca_corporativa.sh` (chamado pelo `implantar.sh`
+e pelo `conectar_intranet.sh`, idempotente) confere a impressão digital do
+certificado **público** da AC, instala-o no trust store do servidor
+(`/usr/local/share/ca-certificates/everblue-corporate-root-ca-v1.crt` +
+`update-ca-certificates`) e o deixa em `infrastructure/confianca/`, de onde o
+build da imagem da API o coloca no trust store **da imagem** (bundle lido por
+`NODE_EXTRA_CA_CERTS`). A raiz anterior, **Everblue Intranet Root CA v2**,
+continua junto para retorno. A verificação TLS fica sempre ligada; nunca se
+usa `-k`. Diagnóstico: `sudo bash infrastructure/scripts/confiar_ca_corporativa.sh --verificar`.
 
 Rotação: trocar `ACCESS_API_MASTER_SECRET` na Intranet invalida as chaves de
 TODAS as aplicações (IA e Monitoramento) — rodar o `conectar` de cada uma.

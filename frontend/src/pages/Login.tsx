@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, ShieldCheck } from 'lucide-react'
+import AvisoIntranet from '../components/ui/AvisoIntranet'
 import { sessaoRepository } from '../repositories'
 
 /** Mensagens escolhidas por CHAVE — nunca um texto recebido pela URL. */
@@ -52,6 +53,7 @@ export default function Login() {
           <p className="mt-2 text-sm text-white/50">Comitê de Monitoramento do FIDC — carteira, alertas, planos e atas</p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur-md sm:p-8">
+          <AvisoIntranet variante="login" />
           {erro && (
             <p className="mb-4 rounded-lg border border-[#f87171]/30 bg-[#f87171]/10 p-3 text-sm text-[#fecaca]" role="alert">
               {erro}

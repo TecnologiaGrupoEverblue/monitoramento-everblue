@@ -19,6 +19,7 @@ async function encerrar(sinal: string) {
   app.log.info({ sinal }, 'encerrando')
   const prazo = setTimeout(() => process.exit(1), 25_000)
   try {
+    deps.monitorIntranet.parar()
     await app.close() // para de aceitar e conclui as requisições em curso
     await deps.banco.encerrar()
   } finally {
@@ -30,3 +31,4 @@ process.on('SIGTERM', () => void encerrar('SIGTERM'))
 process.on('SIGINT', () => void encerrar('SIGINT'))
 
 await app.listen({ host: '0.0.0.0', port: cfg.porta })
+deps.monitorIntranet.iniciar(cfg.diretorio.monitorMs)

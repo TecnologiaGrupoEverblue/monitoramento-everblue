@@ -45,6 +45,7 @@ x-ambiente-api: &ambiente-api
   DIRETORIO_INTEGRATION_SECRET: ${DIRETORIO_INTEGRATION_SECRET:-}
   DIRETORIO_TIMEOUT_S: ${DIRETORIO_TIMEOUT_S:-20}
   DIRETORIO_GRACA_MINUTOS: ${DIRETORIO_GRACA_MINUTOS:-0}
+  DIRETORIO_MONITOR_MINUTOS: ${DIRETORIO_MONITOR_MINUTOS:-5}
   FOTO_FONTE: ${FOTO_FONTE:-graph}
   ADMIN_EMAIL: ${ADMIN_EMAIL:-}
   LOGIN_MAX_TENTATIVAS: ${LOGIN_MAX_TENTATIVAS:-5}
@@ -59,10 +60,9 @@ x-ambiente-api: &ambiente-api
   IMPORTACAO_MAX_LINHAS: ${IMPORTACAO_MAX_LINHAS:-20000}
   ARQUIVOS_MAX_MB: ${ARQUIVOS_MAX_MB:-0}
   ARQUIVOS_EXTENSOES_BLOQUEADAS: ${ARQUIVOS_EXTENSOES_BLOQUEADAS:-}
-  # Raiz PÚBLICA da AC interna que assina https://intranet.grupoeverblue.com.br
-  # (PKI Everblue v2). SOMA-SE às raízes públicas do Node; a verificação TLS
-  # continua ligada para tudo. Ver infrastructure/confianca/LEIA-ME.txt.
-  NODE_EXTRA_CA_CERTS: /etc/everblue/confianca/intranet-raiz-v2.pem
+  # Raízes PÚBLICAS da Intranet (Corporate Root CA v1 + Intranet Root CA v2):
+  # entram no trust store da IMAGEM no build (api.Dockerfile, NODE_EXTRA_CA_CERTS).
+  # Ver infrastructure/confianca/LEIA-ME.txt.
   HTTPS_PROXY: ${HTTPS_PROXY:-}
   NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,db,minio,api}
 
@@ -203,8 +203,6 @@ services:
       # Heap ≈ 75% do limite do contêiner: o Node coleta lixo antes de o
       # kernel matar o processo por falta de memória.
       NODE_OPTIONS: --enable-source-maps --max-old-space-size=384
-    volumes:
-      - ./confianca:/etc/everblue/confianca:ro
     command: ["node", "dist/cli.js", "migrar"]
     depends_on:
       db: {condition: service_healthy}
@@ -232,8 +230,6 @@ services:
       <<: *ambiente-api
       PORTA: "3000"
       NODE_OPTIONS: --enable-source-maps --max-old-space-size=768
-    volumes:
-      - ./confianca:/etc/everblue/confianca:ro
     depends_on:
       db: {condition: service_healthy}
       migracao: {condition: service_completed_successfully}

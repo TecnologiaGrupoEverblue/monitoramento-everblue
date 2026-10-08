@@ -1,9 +1,9 @@
 /**
  * Tipo REAL do arquivo pelo conteúdo (assinatura / magic bytes).
  *
- * O Monitoramento aceita qualquer tipo de arquivo. A detecção não serve para
- * recusar, e sim para registrar o que o arquivo de fato é — a extensão e o
- * `Content-Type` declarados pelo navegador não são confiáveis. Na devolução,
+ * Registra o que o arquivo de fato é — a extensão e o `Content-Type`
+ * declarados pelo navegador não são confiáveis — e aponta conteúdo
+ * EXECUTÁVEL (programa ou script), que a Central recusa mesmo renomeado. Na devolução,
  * o arquivo sai sempre como anexo (`Content-Disposition: attachment`) com
  * `nosniff`, então nenhum conteúdo enviado é executado no navegador.
  */
@@ -30,7 +30,13 @@ const ASSINATURAS: Assinatura[] = [
   { mime: 'application/vnd.rar', teste: (b) => texto(b, 0, 'Rar!') },
   { mime: 'audio/mpeg', teste: (b) => texto(b, 0, 'ID3') },
   { mime: 'video/mp4', teste: (b) => texto(b, 4, 'ftyp') },
-  { mime: 'application/x-msdownload', teste: (b) => texto(b, 0, 'MZ') },
+  { mime: 'application/x-msdownload', teste: (b) => texto(b, 0, 'MZ') && !pareceTexto(b) },
+  { mime: 'application/x-executable', teste: comeca(0x7f, 0x45, 0x4c, 0x46) }, // ELF (Linux)
+  {
+    mime: 'application/x-mach-binary', // macOS
+    teste: (b) =>
+      [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(b.length >= 4 ? b.readUInt32BE(0) : 0),
+  },
   { mime: 'application/x-ole-storage', teste: comeca(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1) },
   { mime: 'application/zip', teste: (b) => comeca(0x50, 0x4b, 0x03, 0x04)(b) || comeca(0x50, 0x4b, 0x05, 0x06)(b) },
 ]
@@ -76,9 +82,19 @@ export interface TipoDetectado {
   mime: string
   /** O conteúdo diverge do que a extensão sugere (ex.: .pdf que é executável). */
   divergente: boolean
+  /** Programa ou script executável pelo CONTEÚDO, qualquer que seja o nome. */
+  executavel: boolean
 }
 
+const MIMES_EXECUTAVEIS = new Set(['application/x-msdownload', 'application/x-executable', 'application/x-mach-binary'])
+export const mimeExecutavel = (mime: string) => MIMES_EXECUTAVEIS.has(mime) || mime === 'text/x-script'
+
 export function detectarTipo(cabecalho: Buffer, nomeOriginal: string): TipoDetectado {
+  const t = detectar(cabecalho, nomeOriginal)
+  return { ...t, executavel: mimeExecutavel(t.mime) }
+}
+
+function detectar(cabecalho: Buffer, nomeOriginal: string): Omit<TipoDetectado, 'executavel'> {
   const extensao = path.extname(nomeOriginal).toLowerCase()
   const assinatura = ASSINATURAS.find((a) => a.teste(cabecalho))
   if (assinatura?.mime === 'application/zip') {
@@ -91,7 +107,11 @@ export function detectarTipo(cabecalho: Buffer, nomeOriginal: string): TipoDetec
     const esperado = EXTENSAO_DO_MIME[assinatura.mime]
     return { mime: assinatura.mime, divergente: !!extensao && !!esperado && !esperado.includes(extensao) }
   }
-  if (pareceTexto(cabecalho)) return { mime: POR_EXTENSAO_TEXTO[extensao] ?? 'text/plain', divergente: false }
+  if (pareceTexto(cabecalho)) {
+    // Script com interpretador declarado ("#!/bin/sh", "#!/usr/bin/env python").
+    if (texto(cabecalho, 0, '#!')) return { mime: 'text/x-script', divergente: false }
+    return { mime: POR_EXTENSAO_TEXTO[extensao] ?? 'text/plain', divergente: false }
+  }
   return { mime: 'application/octet-stream', divergente: false }
 }
 
@@ -109,6 +129,8 @@ const EXTENSAO_DO_MIME: Record<string, string[]> = {
   'audio/mpeg': ['.mp3'],
   'video/mp4': ['.mp4', '.m4v', '.m4a', '.mov', '.heic'],
   'application/x-msdownload': ['.exe', '.dll', '.msi'],
+  'application/x-executable': [],
+  'application/x-mach-binary': [],
 }
 
 /** Extensão segura para a chave do objeto (nunca o nome original). */

@@ -69,6 +69,8 @@ export function assinar(segredo: string, e: EntradaAssinatura): string {
   return createHmac('sha256', segredo).update(canonico(e), 'utf8').digest('hex')
 }
 
+export type ResultadoConsultaIntranet = { ok: true } | { ok: false; motivo: string }
+
 export class ClienteIntranet {
   constructor(
     private readonly cfg: Configuracao,
@@ -111,7 +113,35 @@ export class ClienteIntranet {
     }
     const oid = oidEsperado.trim()
     if (!UUID.test(oid)) throw new AutoridadeIndisponivel('A sessão não possui identidade Entra válida vinculada.')
+    // Toda consulta real (login, revalidação da sessão, verificação periódica)
+    // informa os observadores: a Intranet respondeu de forma utilizável — mesmo
+    // negando a pessoa — ou não.
+    try {
+      const acesso = await this.consultarMe(oid)
+      this.notificar({ ok: true })
+      return acesso
+    } catch (erro) {
+      if (erro instanceof AcessoNegado) this.notificar({ ok: true })
+      else if (erro instanceof AutoridadeIndisponivel) this.notificar({ ok: false, motivo: erro.message })
+      throw erro
+    }
+  }
 
+  private readonly observadores: ((r: ResultadoConsultaIntranet) => void)[] = []
+  observar(fn: (r: ResultadoConsultaIntranet) => void): void {
+    this.observadores.push(fn)
+  }
+  private notificar(r: ResultadoConsultaIntranet) {
+    for (const fn of this.observadores) {
+      try {
+        fn(r)
+      } catch {
+        // observador nunca derruba a validação
+      }
+    }
+  }
+
+  private async consultarMe(oid: string): Promise<AcessoConfirmado> {
     let resposta: Response
     try {
       resposta = await fetch(`${this.cfg.diretorio.url}${CAMINHO_ME}`, {

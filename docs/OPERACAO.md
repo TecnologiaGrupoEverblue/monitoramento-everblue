@@ -43,6 +43,34 @@ do limite (`--max-old-space-size`), `memswap_limit` igual ao limite de memória
 (sem swap no contêiner) e `no-new-privileges` em todos os serviços. O nginx tem
 verificação própria em `http://127.0.0.1/nginx-saude` (porta 80, sem redirecionar).
 
+Sem Gerente (1.1.4): linha importada com a coluna Gerente vazia fica sob o
+gerente **"Sem Gerente"** (com aviso na prévia da importação). A migração
+0006 corrige o que já tinha sido importado com gerente de nome vazio.
+
+Central de Arquivos (1.1.4): programas e scripts executáveis são sempre
+recusados — pelo nome (.exe, .dll, .msi, .bat, .cmd, .ps1, .vbs, .js, .jar,
+.sh…) e pelo CONTEÚDO (executável renomeado, ELF, Mach-O, script com `#!`),
+sem deixar resto no bucket. Limite padrão de 100 MB por arquivo
+(`ARQUIVOS_MAX_MB`, 0 = padrão). Versão antiga executável não pode ser
+restaurada. Arquivos já guardados não são apagados.
+
+Alerta da Intranet (1.1.4): a API acompanha toda validação de acesso e
+verifica a Intranet a cada `DIRETORIO_MONITOR_MINUTOS` (5). Quando cai: aviso
+na tela de login e no topo do sistema, log de ERRO `intranet_indisponivel`
+(aparece em "Erros recentes da API" do `verificar.sh`) e evento de auditoria
+`intranet.indisponivel`; ao voltar, `intranet.restabelecida`. Estado para
+ferramentas de monitoração: `GET /api/health/intranet` (200 ok, 503 fora).
+
+Confiança na Intranet (1.1.3): o `implantar.sh` roda antes do build o
+`confiar_ca_corporativa.sh`, que instala (uma vez; depois só confere) o
+certificado público da **Everblue Corporate Root CA v1** no servidor e na
+imagem da API. Se o certificado não estiver no pacote nem no servidor, ele o
+busca na VM da Intranet (pede a senha dela). Ao fim da implantação há um
+smoke test da chamada assinada à Intranet; o `verificar.sh` confere as duas
+coisas. Retorno da confiança: apagar
+`/usr/local/share/ca-certificates/everblue-corporate-root-ca-v1.crt` e rodar
+`update-ca-certificates --fresh` (a raiz v2 continua instalada na imagem).
+
 Apresentação de valores (1.1.2): a partir de **R$ 1 milhão** todo valor em
 tela, ata, alerta e gráfico aparece em milhões com **3 casas decimais**
 (`R$ 14,665 mi`); abaixo disso, por extenso (`R$ 229.000`). A regra fica em

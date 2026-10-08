@@ -1,13 +1,25 @@
 Raízes de confiança PÚBLICAS usadas pela API do Monitoramento.
+Só certificados públicos: nenhuma chave privada fica aqui (o build recusa).
 
-intranet-raiz-v2.pem
-  "Everblue Intranet Root CA v2" — AC interna que assina o certificado de
-  https://intranet.grupoeverblue.com.br (PKI Everblue v2, 16/09/2026).
+everblue-corporate-root-ca-v1.pem   (AC ATUAL da Intranet, desde 10/2026)
+  "Everblue Corporate Root CA v1" — emite o certificado de
+  https://intranet.grupoeverblue.com.br. Válida até 03/10/2036.
+  SHA-256: 27681A8063BEC545FA2E91B75A2C9BF888B2603B8F2A4997701BD14D2E59B7E9
+  Origem: /var/lib/everblue-corporate-pki-v1-public/Everblue-Corporate-Root-CA-v1.cer
+  Instalada no servidor e trazida para cá por
+  infrastructure/scripts/confiar_ca_corporativa.sh (chamado pelo implantar.sh).
+
+intranet-raiz-v2.pem                (AC ANTERIOR — mantida para retorno)
+  "Everblue Intranet Root CA v2" (PKI Everblue v2, 16/09/2026).
   SHA-256: A6:3C:3A:FB:DF:BE:1C:DB:E9:CF:C7:FF:32:0A:8D:36:94:9B:35:68:D9:08:70:43:10:B4:5D:56:91:E7:63:50
-  Mesma raiz distribuída por GPO aos computadores da companhia.
+  Remover só quando a Intranet confirmar que não volta para ela.
 
-Entra na API por NODE_EXTRA_CA_CERTS (compose.yaml), somando-se às raízes
-públicas do Node — nunca substituindo nem desligando a verificação TLS.
-Só certificado público: nenhuma chave privada fica aqui.
-Rotação da raiz: trocar o arquivo, atualizar o SHA-256 em
-infrastructure/scripts/conectar_intranet.sh e reimplantar.
+Como entram na API: o api.Dockerfile copia as duas para o trust store da
+IMAGEM no build, confere a impressão digital de cada uma (arquivo trocado =
+build falha), roda update-ca-certificates e monta o bundle
+/etc/everblue/confianca/raizes-everblue.pem, lido pelo Node via
+NODE_EXTRA_CA_CERTS — soma-se às raízes públicas; a verificação TLS continua
+ligada para tudo. Nada é feito à mão dentro de contêiner em execução.
+
+Rotação de raiz: trocar o arquivo, atualizar a impressão digital em
+api.Dockerfile (ARG) e em confiar_ca_corporativa.sh, e reimplantar.

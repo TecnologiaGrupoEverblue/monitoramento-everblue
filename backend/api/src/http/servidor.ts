@@ -33,6 +33,14 @@ export async function construirServidor(deps: Dependencias, opcoes: { log?: bool
   })
 
   app.setErrorHandler(criarTratadorDeErros(deps.cfg.cookieSeguro))
+  // Alerta: a validação pela Intranet caiu ou voltou (uma linha por MUDANÇA).
+  deps.monitorIntranet.aoMudar((estado, anterior) => {
+    if (estado.situacao === 'INDISPONIVEL') {
+      app.log.error({ motivo: estado.motivo, desde: estado.desde, anterior }, 'intranet_indisponivel: login corporativo bloqueado')
+    } else {
+      app.log.info({ desde: estado.desde, anterior }, 'intranet_restabelecida')
+    }
+  })
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).type('application/problem+json').send({ title: 'Não encontrado', status: 404, detail: `Rota inexistente: ${request.method} ${request.url.split('?')[0]}`, codigo: 'nao_encontrado' }),
   )

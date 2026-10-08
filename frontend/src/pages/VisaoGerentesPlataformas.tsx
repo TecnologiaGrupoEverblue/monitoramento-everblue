@@ -3,7 +3,7 @@ import { Painel } from '../components/ui/Card'
 import { useDrillDown } from '../contexts/DrillDownContext'
 import { useFiltros } from '../contexts/FiltrosContext'
 import { dashboardRepository, type RankingDimensao } from '../repositories'
-import { formatarMoeda, formatarPercentual } from '../utils/formatters'
+import { formatarMoeda, formatarPercentual, SEM_GERENTE } from '../utils/formatters'
 
 type Aba = 'gerenteId' | 'plataformaId'
 
@@ -94,17 +94,20 @@ export default function VisaoGerentesPlataformas() {
                 </tr>
               </thead>
               <tbody>
-                {ranking.map((item) => (
+                {ranking.map((item) => {
+                  // Cadastro sem nome nunca aparece em branco.
+                  const nome = item.nome.trim() || (aba === 'gerenteId' ? SEM_GERENTE : '—')
+                  return (
                   <tr
                     key={item.id}
                     className="cursor-pointer border-t hover:bg-[var(--cor-fundo-recuado)]"
                     style={{ borderColor: 'var(--cor-borda)' }}
-                    onClick={() => abrir(`${aba === 'gerenteId' ? 'Gerente' : 'Plataforma'}: ${item.nome}`, item.clienteIds)}
+                    onClick={() => abrir(`${aba === 'gerenteId' ? 'Gerente' : 'Plataforma'}: ${nome}`, item.clienteIds)}
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <span className="font-medium" style={{ color: 'var(--cor-primaria)' }}>
-                          {item.nome}
+                          {nome}
                         </span>
                         <div className="h-1.5 w-16 overflow-hidden rounded-full bg-[var(--cor-fundo-recuado)]">
                           <div className="h-full rounded-full" style={{ width: `${riscoMax > 0 ? (item.riscoTotal / riscoMax) * 100 : 0}%`, backgroundColor: 'var(--cor-acento)' }} />
@@ -133,7 +136,8 @@ export default function VisaoGerentesPlataformas() {
                       {item.planosAtrasados}
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

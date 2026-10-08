@@ -1,4 +1,4 @@
-import { CAMPOS_IMPORTACAO, validarLinhasPlanilha } from '@monitoramento/dominio'
+import { CAMPOS_IMPORTACAO, SEM_GERENTE, validarLinhasPlanilha } from '@monitoramento/dominio'
 import { describe, expect, it } from 'vitest'
 import { detectarFormato, lerLinhasPlanilha, nomeSeguro, separarCnpjsRepetidos } from '../src/servicos/servicoImportacao'
 import { readFileSync } from 'node:fs'
@@ -32,6 +32,13 @@ describe('leitura e validação da planilha', () => {
     expect(r.colunasFaltando).toEqual([])
     expect(r.validas[0].riscoCliente).toBeCloseTo(1234567.89)
     expect(r.validas[0].produtos).toEqual(['Desconto de Duplicatas'])
+  })
+  it('gerente vazio vira "Sem Gerente", com aviso', () => {
+    const r = validarLinhasPlanilha([cabecalho, linha('11.111.111/0001-11', { Gerente: '  ' }), linha('22.222.222/0001-22')])
+    expect(r.comErro).toEqual([])
+    expect(r.validas[0].gerente).toBe(SEM_GERENTE)
+    expect(r.validas[0].avisos).toContain('"Gerente" vazio: cliente atribuído a "Sem Gerente".')
+    expect(r.validas[1].gerente).toBe('Gerente T')
   })
   it('CNPJ repetido na mesma planilha vira erro, não duplicidade', () => {
     const r = separarCnpjsRepetidos(validarLinhasPlanilha([cabecalho, linha('11.111.111/0001-11'), linha('11111111000111')]))

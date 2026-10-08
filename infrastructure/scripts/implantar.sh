@@ -71,6 +71,15 @@ if command -v openssl >/dev/null 2>&1; then
   ok "certificado TLS presente e válido"
 fi
 
+# ------------------------------------------- confiança na AC da Intranet
+# A Intranet usa certificado da "Everblue Corporate Root CA v1". O servidor e a
+# imagem da API precisam confiar nela (só o certificado PÚBLICO, conferido pela
+# impressão digital). Idempotente: se já estiver instalada, nada muda. Sem a
+# raiz, o build da API falha de propósito (não sobe sem conseguir validar a Intranet).
+info "Confiança na AC corporativa da Intranet..."
+CONFIAR_REDE=aviso bash "$RAIZ/infrastructure/scripts/confiar_ca_corporativa.sh" \
+  || erro "Não foi possível instalar a confiança na Everblue Corporate Root CA v1. Veja a mensagem acima; nada foi implantado."
+
 # ---------------------------------------------------------------- compose
 docker compose config -q || erro "compose.yaml inválido com o .env atual."
 ok "compose válido"
@@ -138,6 +147,18 @@ conferir_rota /api/v1/autenticacao/modo 200
 conferir_rota /api/v1/sessao 401
 (( ${#MORTAS[@]} == 0 )) || erro "Serviços no ar, mas o proxy não publica: ${MORTAS[*]}.
   Diagnóstico: docker compose logs --tail=40 nginx api"
+
+# ------------------------------------------------ smoke test da Intranet
+# Login depende da chamada assinada à Intranet (TLS validado pela AC corporativa).
+if [[ -n "${DIRETORIO_URL:-}" && ${#SEGREDO_INTRANET} -ge 32 ]]; then
+  info "Smoke test: chamada assinada à Intranet..."
+  if docker compose exec -T api node dist/cli.js testar-intranet; then
+    ok "Intranet validada pela API (login corporativo disponível)"
+  else
+    aviso "A API NÃO conseguiu validar o acesso na Intranet: o login corporativo ficará indisponível."
+    aviso "Diagnóstico: sudo bash infrastructure/scripts/confiar_ca_corporativa.sh --verificar"
+  fi
+fi
 
 docker compose ps --format 'table {{.Service}}\t{{.Status}}'
 echo

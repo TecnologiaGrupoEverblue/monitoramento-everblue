@@ -58,7 +58,7 @@ export async function rotasArquivos(app: FastifyInstance, deps: Dependencias): P
   /** Lê o multipart em fluxo: campos ANTES do arquivo, arquivo por último. */
   async function receberArquivo(request: FastifyRequest) {
     const parte = await request.file({
-      limits: { fileSize: deps.cfg.arquivos.maxBytes ?? Number.MAX_SAFE_INTEGER, files: 1, fields: 20, fieldSize: 16 * 1024 },
+      limits: { fileSize: deps.cfg.arquivos.maxBytes, files: 1, fields: 20, fieldSize: 16 * 1024 },
     })
     if (!parte || parte.fieldname !== 'arquivo') throw new ErroHttp(400, 'Envie o arquivo no campo "arquivo" (depois dos demais campos).', 'arquivo_ausente')
     const campos: Record<string, string> = {}
@@ -92,6 +92,7 @@ export async function rotasArquivos(app: FastifyInstance, deps: Dependencias): P
       .parse(request.query)
     return servico.listar(q as never)
   })
+  app.get('/api/v1/arquivos/politica', leitor, () => servico.politica())
   app.get('/api/v1/arquivos/categorias', leitor, () => servico.categorias())
   app.get('/api/v1/arquivos/totais', leitor, () => servico.totais())
   app.get('/api/v1/arquivos/:arquivoId', leitor, (request) => servico.obter(z.object({ arquivoId: uuid }).parse(request.params).arquivoId))

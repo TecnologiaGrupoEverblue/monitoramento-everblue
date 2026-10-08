@@ -3,6 +3,9 @@ import type { StatusCliente, StatusProposta } from '../models/types'
 import { TIPOS_RESTRITIVO, type LinhaRestritivo, type TipoRestritivo } from '../regras/restritivos'
 
 const STATUS_CLIENTE_VALIDOS: StatusCliente[] = ['NORMAL', 'MONITORAMENTO', 'SAIDA_DE_RISCO', 'JURIDICO']
+/** Nome do cadastro de gerente para clientes que vêm sem gerente na base. */
+export const SEM_GERENTE = 'Sem Gerente'
+
 const STATUS_PROPOSTA_VALIDOS: StatusProposta[] = ['EM_ANALISE', 'APROVADA', 'VENCIDA', 'REPROVADA', 'SEM_PROPOSTA']
 
 /** Como a base do comitê escreve, aceito sem pedir que o usuário converta. */
@@ -331,6 +334,12 @@ export function validarLinhasPlanilha(linhas: unknown[][], opcoes: OpcoesValidac
       }
     }
 
+    // Cliente sem gerente na base: fica sob "Sem Gerente" (cadastro único,
+    // visível em todas as telas), nunca com nome vazio.
+    if (!dados.gerente) {
+      dados.gerente = SEM_GERENTE
+      avisos.push(`"Gerente" vazio: cliente atribuído a "${SEM_GERENTE}".`)
+    }
     const documentos = (dados.documentos as string[] | undefined) ?? []
     if (!dados.nome) erros.push('"Cliente" é obrigatório.')
     if (documentos.length === 0) erros.push('"CNPJ" é obrigatório.')

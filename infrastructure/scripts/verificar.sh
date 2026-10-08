@@ -52,6 +52,15 @@ BD -c "SELECT 'usuarios' AS tabela, count(*) FROM usuario
        UNION ALL SELECT 'auditoria', count(*) FROM auditoria;" || true
 echo
 
+echo "== Intranet (TLS pela Everblue Corporate Root CA v1) =="
+checar "AC corporativa no trust store do servidor"   bash "$RAIZ/infrastructure/scripts/confiar_ca_corporativa.sh" --verificar
+checar "AC corporativa no trust store da imagem da API" docker compose exec -T api sh -c 'grep -qF "$(sed -n 2p /usr/local/share/ca-certificates/everblue-corporate-root-ca-v1.crt)" "$NODE_EXTRA_CA_CERTS"'
+if [[ -n "${DIRETORIO_URL:-}" ]]; then
+  checar "alerta da Intranet sem indisponibilidade (/api/health/intranet)" curl -kfsS "${BASE}/api/health/intranet"
+  checar "API valida o acesso na Intranet (chamada assinada)" docker compose exec -T api node dist/cli.js testar-intranet
+fi
+echo
+
 echo "== MinIO =="
 checar "MinIO saudável" docker compose exec -T minio wget -q -O /dev/null http://127.0.0.1:9000/minio/health/live
 checar "minio-init concluiu sem erro" bash -c "[ \"\$(docker inspect -f '{{.State.ExitCode}}' emon-minio-init)\" = 0 ]"

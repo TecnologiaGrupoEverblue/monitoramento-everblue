@@ -53,6 +53,7 @@ import {
   type PautaComite,
   type RegraClassificacao,
   type RestritivoSemanal,
+  type PoliticaArquivos,
 } from '@monitoramento/dominio'
 import { addDays, format } from 'date-fns'
 import { api, enviarComProgresso, requisitar } from '../api/cliente'
@@ -294,6 +295,7 @@ export const arquivoRepository = {
   versoes: (id: string) => api.get<VersaoArquivo[]>(`${V1}/arquivos/${cod(id)}/versoes`),
   eventos: (id: string) => api.get<EventoArquivo[]>(`${V1}/arquivos/${cod(id)}/eventos`),
   categorias: () => api.get<string[]>(`${V1}/arquivos/categorias`),
+  politica: () => api.get<PoliticaArquivos>(`${V1}/arquivos/politica`),
   totais: () => api.get<TotaisArquivos>(`${V1}/arquivos/totais`),
   /** URL de download direto (o navegador baixa em fluxo, sem passar pela memória da página). */
   urlConteudo: (id: string, versao?: number, visualizar = false) =>
@@ -319,4 +321,23 @@ export const arquivoRepository = {
 export const exportacaoRepository = {
   /** Gera no servidor, guarda no MinIO e devolve o arquivo já registrado. */
   exportar: (chave: 'carteira' | 'planos-de-acao', filtros: Partial<FiltrosGlobais>) => api.post<ArquivoResumo>(`${V1}/exportacoes/${cod(chave)}`, semVazios(filtros)),
+}
+
+/** Estado público da validação de acesso pela Intranet (alerta de indisponibilidade). */
+export interface EstadoIntranetPublico {
+  situacao: 'OK' | 'INDISPONIVEL' | 'NAO_CONFIGURADA' | 'DESCONHECIDA'
+  desde: string | null
+  verificadoEm: string | null
+}
+
+export const saudeRepository = {
+  /** 503 também traz o estado no corpo; sem resposta, `null` (não alarma à toa). */
+  intranet: async (): Promise<EstadoIntranetPublico | null> => {
+    try {
+      const r = await fetch('/api/health/intranet', { credentials: 'same-origin', cache: 'no-store' })
+      return (await r.json()) as EstadoIntranetPublico
+    } catch {
+      return null
+    }
+  },
 }

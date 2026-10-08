@@ -50,13 +50,14 @@ INTRANET_URL="${INTRANET_URL:-https://intranet.grupoeverblue.com.br}"
 INTRANET_URL="${INTRANET_URL%/}"
 MODO="${1:-completo}"
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Raiz PÚBLICA da AC interna da Intranet (PKI Everblue v2). Conferida pela
-# impressão digital antes de ser usada: arquivo trocado não vira confiança.
-RAIZ_SHA256="A6:3C:3A:FB:DF:BE:1C:DB:E9:CF:C7:FF:32:0A:8D:36:94:9B:35:68:D9:08:70:43:10:B4:5D:56:91:E7:63:50"
-RAIZ=""
-for c in "$AQUI/intranet-raiz-v2.pem" "$AQUI/../confianca/intranet-raiz-v2.pem" "$APP/infrastructure/confianca/intranet-raiz-v2.pem"; do
-  [[ -f "$c" ]] && { RAIZ="$c"; break; }
+# Confiança TLS na Intranet: a AC atual é a "Everblue Corporate Root CA v1",
+# instalada (só o certificado público, conferido pela impressão digital) pelo
+# confiar_ca_corporativa.sh. A conferência abaixo usa o bundle do sistema.
+CONFIAR=""
+for c in "$AQUI/confiar_ca_corporativa.sh" "$APP/infrastructure/scripts/confiar_ca_corporativa.sh"; do
+  [[ -f "$c" ]] && { CONFIAR="$c"; break; }
 done
+BUNDLE_SO="/etc/ssl/certs/ca-certificates.crt"
 
 info()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 ok()    { printf '  \033[1;32mok\033[0m %s\n' "$*"; }
@@ -91,18 +92,20 @@ ok "Application (client) ID: $CLIENT_ID"
 info "2/5 A VM alcança a Intranet?"
 HOST="${INTRANET_URL#https://}"; HOST="${HOST%%/*}"
 getent hosts "$HOST" >/dev/null || erro "Esta VM não resolve $HOST. Peça à infraestrutura o DNS interno (o mesmo que a VM da IA usa) e rode de novo. Nada foi alterado."
-[[ -n "$RAIZ" ]] || erro "Raiz da AC da Intranet (intranet-raiz-v2.pem) não encontrada no pacote. Nada foi alterado."
-DIGITAL="$(openssl x509 -in "$RAIZ" -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)"
-[[ "$DIGITAL" == "$RAIZ_SHA256" ]] || erro "A raiz $RAIZ não confere com a impressão digital esperada da PKI Everblue v2. Nada foi alterado."
-ok "raiz da AC da Intranet conferida (Everblue Intranet Root CA v2)"
-# TLS verificado de verdade: só com a raiz da companhia, nunca com -k.
-CODIGO="$(curl -s -o /dev/null -m 15 --cacert "$RAIZ" -w '%{http_code}' "$INTRANET_URL/api/access/v1/me" || true)"
+if [[ -n "$CONFIAR" ]]; then
+  CONFIAR_REDE=aviso bash "$CONFIAR" || erro "Não foi possível confiar na Everblue Corporate Root CA v1. Nada foi alterado."
+else
+  aviso "confiar_ca_corporativa.sh não encontrado — conferindo só com o bundle atual do sistema."
+fi
+# TLS verificado de verdade: só com o bundle do sistema, nunca com -k.
+CODIGO="$(curl -s -o /dev/null -m 15 --cacert "$BUNDLE_SO" -w '%{http_code}' "$INTRANET_URL/api/access/v1/me" || true)"
 case "$CODIGO" in
   401|403|503) ok "$INTRANET_URL responde com certificado válido (HTTP $CODIGO sem assinatura, como esperado)";;
   000)
-    if curl -sk -o /dev/null -m 15 "$INTRANET_URL/api/access/v1/me"; then
-      EMISSOR="$(echo | openssl s_client -connect "$HOST:443" -servername "$HOST" 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null | sed 's/^issuer=//')"
-      erro "A Intranet apresentou um certificado que NÃO é da raiz Everblue v2 (emissor: ${EMISSOR:-desconhecido}). Nada foi alterado."
+    # Só diagnóstico (sem confiar em nada): há conexão TLS? então o problema é a cadeia.
+    EMISSOR="$(echo | timeout 15 openssl s_client -connect "$HOST:443" -servername "$HOST" 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null | sed 's/^issuer=//' || true)"
+    if [[ -n "$EMISSOR" ]]; then
+      erro "O certificado da Intranet não é validado pelo bundle do sistema (emissor: ${EMISSOR:-desconhecido}). Rode: sudo bash confiar_ca_corporativa.sh. Nada foi alterado."
     fi
     erro "Esta VM não abre conexão com $INTRANET_URL (rede/firewall). Nada foi alterado.";;
   *) erro "A Intranet respondeu HTTP $CODIGO em /api/access/v1/me — confira INTRANET_URL. Nada foi alterado.";;

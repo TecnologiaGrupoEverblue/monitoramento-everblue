@@ -91,8 +91,9 @@ tar -xzOf "`$NOME" --wildcards '*/infrastructure/servidor/instalar.sh' > instala
 tar -xzOf "`$NOME" --wildcards '*/infrastructure/servidor/atualizar.sh' > atualizar.sh
 tar -xzOf "`$NOME" --wildcards '*/infrastructure/servidor/retornar.sh' > retornar.sh
 tar -xzOf "`$NOME" --wildcards '*/infrastructure/scripts/conectar_intranet.sh' > conectar_intranet.sh
+tar -xzOf "`$NOME" --wildcards '*/infrastructure/scripts/confiar_ca_corporativa.sh' > confiar_ca_corporativa.sh
 tar -xzOf "`$NOME" --wildcards '*/infrastructure/confianca/intranet-raiz-v2.pem' > intranet-raiz-v2.pem
-chmod +x instalar.sh atualizar.sh retornar.sh conectar_intranet.sh
+chmod +x instalar.sh atualizar.sh retornar.sh conectar_intranet.sh confiar_ca_corporativa.sh
 echo
 echo '==> Roda como administrador: o sudo vai pedir a MESMA senha do SSH.'
 exec sudo -p '[sudo] senha do everblue do MONITORAMENTO (a mesma do SSH): ' bash -c "set -e

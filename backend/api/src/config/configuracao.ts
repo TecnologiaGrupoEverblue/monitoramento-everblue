@@ -7,7 +7,7 @@
  * descobrir no primeiro login.
  */
 import { z } from 'zod'
-import { perfilValido, type PerfilAcesso } from '@monitoramento/dominio'
+import { ARQUIVOS_MAX_MB_PADRAO, EXTENSOES_SEMPRE_BLOQUEADAS, perfilValido, type PerfilAcesso } from '@monitoramento/dominio'
 
 /** Caminho de retorno do OIDC — o mesmo usado pela IA Everblue. */
 export const CAMINHO_RETORNO_OIDC = '/oauth/oidc/callback'
@@ -73,6 +73,8 @@ const esquema = z.object({
   DIRETORIO_ESCOPO: texto(),
   DIRETORIO_TIMEOUT_S: inteiro(20, 1, 120),
   DIRETORIO_GRACA_MINUTOS: inteiro(0, 0, 60),
+  /** Verificação periódica da Intranet (alerta de indisponibilidade), em minutos. 0 = só pelas consultas reais. */
+  DIRETORIO_MONITOR_MINUTOS: inteiro(5, 0, 60),
 
   /** De onde vem a foto do cartão: `graph` (padrão da IA Everblue),
    * `intranet` (GET /api/access/v1/photo) ou `nenhuma` (só iniciais). */
@@ -86,9 +88,9 @@ const esquema = z.object({
   MINIO_OBJECT_LOCK: booleano,
 
   IMPORTACAO_MAX_MB: inteiro(20, 1, 100),
-  /** Central de Arquivos: tamanho máximo por arquivo em MB. 0 = sem limite. */
-  ARQUIVOS_MAX_MB: inteiro(0, 0, 10_000_000),
-  /** Extensões recusadas, separadas por vírgula (ex.: ".exe,.bat"). Vazio = todas aceitas. */
+  /** Central de Arquivos: tamanho máximo por arquivo em MB. 0 = padrão (100 MB). */
+  ARQUIVOS_MAX_MB: inteiro(0, 0, 10_240),
+  /** Extensões recusadas ALÉM das sempre bloqueadas (executáveis e scripts), separadas por vírgula. */
   ARQUIVOS_EXTENSOES_BLOQUEADAS: texto(),
   IMPORTACAO_MAX_LINHAS: inteiro(20000, 1, 200000),
 
@@ -126,6 +128,8 @@ export interface Configuracao {
     integrationSecret: string
     timeoutMs: number
     gracaMinutos: number
+    /** Intervalo da verificação periódica (ms); 0 = desligada. */
+    monitorMs: number
     /** Autorização pelo /api/access/v1/me ligada. */
     autorizacaoPeloMe: boolean
   }
@@ -139,7 +143,7 @@ export interface Configuracao {
     objectLock: boolean
   }
   importacao: { maxBytes: number; maxLinhas: number }
-  arquivos: { maxBytes: number | null; extensoesBloqueadas: string[] }
+  arquivos: { maxBytes: number; extensoesBloqueadas: string[] }
   adminEmail: string
   login: { maxTentativas: number; bloqueioMinutos: number }
 }
@@ -213,6 +217,7 @@ export function carregarConfiguracao(ambiente: NodeJS.ProcessEnv = process.env):
       integrationSecret,
       timeoutMs: e.DIRETORIO_TIMEOUT_S * 1000,
       gracaMinutos: e.DIRETORIO_GRACA_MINUTOS,
+      monitorMs: e.DIRETORIO_MONITOR_MINUTOS * 60_000,
       // Como na IA: URL + Client ID + chave forte ligam a autorização.
       autorizacaoPeloMe: Boolean(diretorioUrl && diretorioClientId && integrationSecret.length >= 32),
     },
@@ -227,11 +232,16 @@ export function carregarConfiguracao(ambiente: NodeJS.ProcessEnv = process.env):
     },
     importacao: { maxBytes: e.IMPORTACAO_MAX_MB * 1024 * 1024, maxLinhas: e.IMPORTACAO_MAX_LINHAS },
     arquivos: {
-      maxBytes: e.ARQUIVOS_MAX_MB > 0 ? e.ARQUIVOS_MAX_MB * 1024 * 1024 : null,
-      extensoesBloqueadas: e.ARQUIVOS_EXTENSOES_BLOQUEADAS.split(',')
-        .map((x) => x.trim().toLowerCase())
-        .filter(Boolean)
-        .map((x) => (x.startsWith('.') ? x : `.${x}`)),
+      maxBytes: (e.ARQUIVOS_MAX_MB > 0 ? e.ARQUIVOS_MAX_MB : ARQUIVOS_MAX_MB_PADRAO) * 1024 * 1024,
+      extensoesBloqueadas: [
+        ...new Set([
+          ...EXTENSOES_SEMPRE_BLOQUEADAS,
+          ...e.ARQUIVOS_EXTENSOES_BLOQUEADAS.split(',')
+            .map((x) => x.trim().toLowerCase())
+            .filter(Boolean)
+            .map((x) => (x.startsWith('.') ? x : `.${x}`)),
+        ]),
+      ],
     },
     adminEmail: e.ADMIN_EMAIL.toLowerCase(),
     login: { maxTentativas: e.LOGIN_MAX_TENTATIVAS, bloqueioMinutos: e.LOGIN_BLOQUEIO_MINUTOS },

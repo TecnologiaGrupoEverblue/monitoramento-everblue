@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import AvisoErros from '../ui/AvisoErros'
+import AvisoIntranet from '../ui/AvisoIntranet'
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
 
@@ -20,6 +21,7 @@ export default function Layout() {
       <Sidebar aberto={menuAberto} aoFechar={() => setMenuAberto(false)} aoAlternar={() => setMenuAberto((v) => !v)} />
       <main className="relative z-10 min-h-dvh min-w-0 pt-16 lg:ml-[240px]">
         <Topbar />
+        <AvisoIntranet variante="sistema" />
         <div className="mx-auto min-w-0 max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
           <Outlet />
         </div>

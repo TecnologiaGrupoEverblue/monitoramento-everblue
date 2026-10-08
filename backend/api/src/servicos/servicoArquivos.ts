@@ -23,7 +23,7 @@ import type { Banco } from '../infra/banco'
 import { semChave, type ArquivoCompleto, type ArquivoRepositorio } from '../repositorios/arquivoRepositorio'
 import type { AuditoriaRepositorio } from '../repositorios/auditoriaRepositorio'
 import { ErroNegocio } from './servicoComite'
-import { detectarTipo, extensaoSegura, nomeSeguro } from './tipoArquivo'
+import { detectarTipo, extensaoSegura, mimeExecutavel, nomeSeguro } from './tipoArquivo'
 
 export interface Ator {
   id: string
@@ -31,9 +31,9 @@ export interface Ator {
 }
 
 export interface LimitesArquivos {
-  /** null = sem limite de tamanho. */
-  maxBytes: number | null
-  /** Extensões recusadas (ex.: ".exe"). Vazio = nenhuma. */
+  /** Tamanho máximo por arquivo (padrão 100 MB). */
+  maxBytes: number
+  /** Extensões recusadas: executáveis e scripts sempre, mais as da configuração. */
   extensoesBloqueadas: string[]
 }
 
@@ -164,6 +164,10 @@ export class ServicoArquivos {
     const origem = (await this.arquivos.versoes(arquivoId)).find((v) => v.numero === numero)
     if (!origem) throw new ErroNegocio('Versão não encontrada.', 404, 'versao_inexistente')
     if (numero === atual.versaoAtual) throw new ErroNegocio('Esta já é a versão atual.', 409, 'versao_atual')
+    // Versão antiga executável (enviada antes da 1.1.4) não volta a ser a atual.
+    if (mimeExecutavel(origem.mime) || this.limites.extensoesBloqueadas.includes(extensaoSegura(origem.nomeOriginal))) {
+      throw new ErroNegocio('Esta versão é um programa ou script executável e não pode voltar a ser a atual.', 415, 'conteudo_executavel')
+    }
     const nova = atual.versaoAtual + 1
     const chave = this.chaveObjeto(atual.finalidade, atual.categoria, arquivoId, nova, origem.nomeOriginal)
     const copia = await this.armazenamento.copiar(origem.chaveObjeto, chave)
@@ -303,6 +307,11 @@ export class ServicoArquivos {
     }
   }
 
+  /** Regras de envio, para a tela avisar antes de mandar o arquivo. */
+  politica(): LimitesArquivos {
+    return { maxBytes: this.limites.maxBytes, extensoesBloqueadas: [...this.limites.extensoesBloqueadas] }
+  }
+
   private async exigir(arquivoId: string): Promise<ArquivoCompleto> {
     const a = await this.arquivos.porId(arquivoId)
     if (!a) throw new ErroNegocio('Arquivo não encontrado.', 404, 'nao_encontrado')
@@ -312,7 +321,7 @@ export class ServicoArquivos {
   private conferirExtensao(nome: string) {
     const ext = extensaoSegura(nome)
     if (ext && this.limites.extensoesBloqueadas.includes(ext)) {
-      throw new ErroNegocio(`Arquivos ${ext} não são aceitos por política da companhia.`, 415, 'extensao_bloqueada')
+      throw new ErroNegocio(`Arquivos ${ext} não são aceitos: programas e scripts executáveis são bloqueados por segurança.`, 415, 'extensao_bloqueada')
     }
   }
 
@@ -336,6 +345,11 @@ export class ServicoArquivos {
     }
     const r = medido.resultado()
     const tipo = detectarTipo(r.cabecalho, nome)
+    // Conteúdo executável é recusado mesmo com outro nome (ex.: programa renomeado para .pdf).
+    if (tipo.executavel) {
+      await this.armazenamento.removerDefinitivo(chave).catch(() => 0)
+      throw new ErroNegocio('O conteúdo deste arquivo é um programa ou script executável e não é aceito, mesmo com outra extensão.', 415, 'conteudo_executavel')
+    }
     return { idVersao, tamanhoBytes: r.tamanhoBytes, sha256: r.sha256, mime: tipo.mime, divergente: tipo.divergente }
   }
 

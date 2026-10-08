@@ -14,8 +14,8 @@ import { bancoLimpo, temBanco } from './banco'
 
 describe('tipo real, CSV e chave', () => {
   it('detecta o tipo pelo conteúdo, não pela extensão', () => {
-    expect(detectarTipo(Buffer.from('%PDF-1.7 ...'), 'contrato.pdf')).toEqual({ mime: 'application/pdf', divergente: false })
-    expect(detectarTipo(Buffer.from('MZ\x90\x00'), 'contrato.pdf')).toEqual({ mime: 'application/x-msdownload', divergente: true })
+    expect(detectarTipo(Buffer.from('%PDF-1.7 ...'), 'contrato.pdf')).toEqual({ mime: 'application/pdf', divergente: false, executavel: false })
+    expect(detectarTipo(Buffer.from('MZ\x90\x00'), 'contrato.pdf')).toEqual({ mime: 'application/x-msdownload', divergente: true, executavel: true })
     expect(detectarTipo(Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2]), 'posicao.xlsx').mime).toContain('spreadsheetml')
     expect(detectarTipo(Buffer.from('a;b\n1;2'), 'dados.csv').mime).toBe('text/csv')
     expect(detectarTipo(Buffer.from([0, 1, 2, 3, 0, 9]), 'x.bin').mime).toBe('application/octet-stream')
@@ -79,15 +79,15 @@ describe.skipIf(!temBanco)('Central de Arquivos — ciclo de vida', () => {
   const post = (perfil: string, url: string, payload: unknown = {}) =>
     app.inject({ method: 'POST', url, headers: { cookie: sessoes[perfil], origin: ORIGEM }, payload: payload as object })
 
-  it('envia QUALQUER tipo, versiona, restaura versão e baixa cada versão', async () => {
+  it('envia documentos, versiona, restaura versão e baixa cada versão', async () => {
     const leitorNaoEnvia = await enviar('leitor', '/api/v1/arquivos', {}, 'a.txt', Buffer.from('x'))
     expect(leitorNaoEnvia.statusCode).toBe(403)
 
-    const v1 = Buffer.from('MZ-executavel-de-teste')
-    const r = await enviar('analista', '/api/v1/arquivos', { finalidade: 'anexo', categoria: 'Evidências', descricao: 'Contrato', tags: '{"cliente":"c1"}', recursoTipo: 'cliente', recursoId: 'c1' }, 'ferramenta.exe', v1)
+    const v1 = Buffer.from('minuta do contrato, versão 1')
+    const r = await enviar('analista', '/api/v1/arquivos', { finalidade: 'anexo', categoria: 'Evidências', descricao: 'Contrato', tags: '{"cliente":"c1"}', recursoTipo: 'cliente', recursoId: 'c1' }, 'minuta.txt', v1)
     expect(r.statusCode).toBe(201)
     const arquivo = r.json()
-    expect(arquivo).toMatchObject({ finalidade: 'anexo', categoria: 'Evidências', situacao: 'ATIVO', versaoAtual: 1, mime: 'application/x-msdownload', tamanhoBytes: v1.length, tags: { cliente: 'c1' }, recursoTipo: 'cliente' })
+    expect(arquivo).toMatchObject({ finalidade: 'anexo', categoria: 'Evidências', situacao: 'ATIVO', versaoAtual: 1, mime: 'text/plain', tamanhoBytes: v1.length, tags: { cliente: 'c1' }, recursoTipo: 'cliente' })
     expect(arquivo).not.toHaveProperty('chaveObjeto')
 
     const v2 = Buffer.from('%PDF-1.7 segunda versão')
@@ -98,14 +98,14 @@ describe.skipIf(!temBanco)('Central de Arquivos — ciclo de vida', () => {
     const b1 = await get('leitor', `/api/v1/arquivos/${arquivo.id}/conteudo?versao=1`)
     expect(b1.statusCode).toBe(200)
     expect(b1.rawPayload.equals(v1)).toBe(true)
-    expect(b1.headers['content-disposition']).toMatch(/^attachment; filename="ferramenta.exe"/)
+    expect(b1.headers['content-disposition']).toMatch(/^attachment; filename="minuta.txt"/)
     expect(b1.headers['x-content-type-options']).toBe('nosniff')
     const atual = await get('leitor', `/api/v1/arquivos/${arquivo.id}/conteudo?visualizar=1`)
     expect(atual.rawPayload.equals(v2)).toBe(true)
     expect(atual.headers['content-disposition']).toMatch(/^inline/)
 
     const restaurada = await post('analista', `/api/v1/arquivos/${arquivo.id}/versoes/1/restaurar`)
-    expect(restaurada.json()).toMatchObject({ versaoAtual: 3, nomeOriginal: 'ferramenta.exe' })
+    expect(restaurada.json()).toMatchObject({ versaoAtual: 3, nomeOriginal: 'minuta.txt' })
     expect((await get('leitor', `/api/v1/arquivos/${arquivo.id}/conteudo`)).rawPayload.equals(v1)).toBe(true)
     expect((await get('leitor', `/api/v1/arquivos/${arquivo.id}/versoes`)).json().map((v: { numero: number }) => v.numero)).toEqual([3, 2, 1])
   })
@@ -184,7 +184,32 @@ describe.skipIf(!temBanco)('Central de Arquivos — ciclo de vida', () => {
     expect((await banco.pool.query('SELECT count(*)::int AS n FROM arquivo')).rows[0].n).toBe(0)
   })
 
-  it('sem limite configurado, arquivo grande passa em fluxo', async () => {
+  it('programas e scripts são recusados pelo nome E pelo conteúdo, sem deixar resto', async () => {
+    const casos: [string, Buffer, string][] = [
+      ['instalador.exe', Buffer.from('qualquer coisa'), 'extensao_bloqueada'],
+      ['rotina.PS1', Buffer.from('Write-Host oi'), 'extensao_bloqueada'],
+      ['relatorio.pdf', Buffer.concat([Buffer.from('MZ'), Buffer.alloc(200, 0)]), 'conteudo_executavel'], // .exe renomeado
+      ['dados.dat', Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.alloc(64, 0)]), 'conteudo_executavel'], // ELF
+      ['leia.txt', Buffer.from('#!/bin/sh\nrm -rf /\n'), 'conteudo_executavel'], // script
+    ]
+    for (const [nome, conteudo, codigo] of casos) {
+      const r = await enviar('analista', '/api/v1/arquivos', {}, nome, conteudo)
+      expect(r.statusCode, nome).toBe(415)
+      expect(r.json().codigo, nome).toBe(codigo)
+    }
+    expect(armazenamento.objetos.size).toBe(0)
+    expect((await banco.pool.query('SELECT count(*)::int AS n FROM arquivo')).rows[0].n).toBe(0)
+    // Texto que só começa com "MZ" não é programa.
+    expect((await enviar('analista', '/api/v1/arquivos', {}, 'nota.txt', Buffer.from('MZ é a sigla da filial'))).statusCode).toBe(201)
+  })
+
+  it('a tela recebe a política: 100 MB por padrão e executáveis sempre bloqueados', async () => {
+    const p = (await get('leitor', '/api/v1/arquivos/politica')).json()
+    expect(p.maxBytes).toBe(100 * 1024 * 1024)
+    expect(p.extensoesBloqueadas).toEqual(expect.arrayContaining(['.exe', '.bat', '.ps1', '.js', '.jar']))
+  })
+
+  it('abaixo do limite padrão, arquivo grande passa em fluxo', async () => {
     const tamanho = 30 * 1024 * 1024
     const r = await enviar('analista', '/api/v1/arquivos', { finalidade: 'importado', categoria: 'extratos' }, 'extrato.ofx', Buffer.alloc(tamanho, 65))
     expect(r.statusCode).toBe(201)

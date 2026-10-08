@@ -1,15 +1,19 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FileUp } from 'lucide-react'
-import { FINALIDADES_ARQUIVO, formatarBytes, type ArquivoResumo, type FinalidadeArquivo } from '@monitoramento/dominio'
+import { ARQUIVOS_MAX_MB_PADRAO, EXTENSOES_SEMPRE_BLOQUEADAS, FINALIDADES_ARQUIVO, formatarBytes, motivoRecusaArquivo, type ArquivoResumo, type FinalidadeArquivo, type PoliticaArquivos } from '@monitoramento/dominio'
 import { ErroApi } from '../../api/cliente'
 import { arquivoRepository } from '../../repositories'
 import { Modal } from '../ui/Modal'
 import { ROTULO_FINALIDADE } from './rotulos'
 
 /**
- * Envio de arquivo novo ou de nova versão. Qualquer tipo e tamanho: o arquivo
- * vai em fluxo até o MinIO, com barra de progresso e opção de cancelar.
+ * Envio de arquivo novo ou de nova versão: vai em fluxo até o MinIO, com
+ * barra de progresso e opção de cancelar. Programas e scripts executáveis e
+ * arquivos acima do limite são avisados aqui, antes de enviar; a decisão
+ * final é da API, que também confere o conteúdo.
  */
+const POLITICA_PADRAO: PoliticaArquivos = { maxBytes: ARQUIVOS_MAX_MB_PADRAO * 1048576, extensoesBloqueadas: [...EXTENSOES_SEMPRE_BLOQUEADAS] }
+
 export function EnvioArquivo({
   categorias,
   novaVersaoDe,
@@ -31,6 +35,20 @@ export function EnvioArquivo({
   const [progresso, setProgresso] = useState<number | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const cancelamento = useRef<AbortController | null>(null)
+  const [politica, setPolitica] = useState<PoliticaArquivos>(POLITICA_PADRAO)
+  useEffect(() => {
+    let ativo = true
+    arquivoRepository.politica().then((p) => ativo && setPolitica(p)).catch(() => undefined) // sem resposta: vale o padrão; a API decide
+    return () => {
+      ativo = false
+    }
+  }, [])
+
+  function escolher(f: File | null) {
+    setArquivo(f)
+    setErro(f ? motivoRecusaArquivo(f.name, f.size, politica) : null)
+  }
+  const recusado = !!arquivo && motivoRecusaArquivo(arquivo.name, arquivo.size, politica) !== null
 
   async function enviar() {
     if (!arquivo) return
@@ -60,14 +78,14 @@ export function EnvioArquivo({
   return (
     <Modal
       titulo={titulo}
-      subtitulo={novaVersaoDe ? `${novaVersaoDe.nomeOriginal} — a versão ${novaVersaoDe.versaoAtual} continua guardada no histórico` : 'Qualquer tipo de arquivo, de qualquer tamanho'}
+      subtitulo={novaVersaoDe ? `${novaVersaoDe.nomeOriginal} — a versão ${novaVersaoDe.versaoAtual} continua guardada no histórico` : `Até ${Math.round(politica.maxBytes / 1048576)} MB por arquivo · programas e scripts executáveis não são aceitos`}
       aoFechar={enviando ? () => cancelamento.current?.abort() : aoFechar}
       rodape={
         <>
           <button type="button" className="botao-secundario" onClick={enviando ? () => cancelamento.current?.abort() : aoFechar}>
             {enviando ? 'Cancelar envio' : 'Fechar'}
           </button>
-          <button type="button" className="botao-primario" disabled={!arquivo || enviando} onClick={enviar}>
+          <button type="button" className="botao-primario" disabled={!arquivo || enviando || recusado} onClick={enviar}>
             <FileUp className="h-4 w-4" /> {enviando ? `Enviando ${Math.round((progresso ?? 0) * 100)}%` : 'Enviar'}
           </button>
         </>
@@ -81,7 +99,7 @@ export function EnvioArquivo({
           onDrop={(e) => {
             e.preventDefault()
             const f = e.dataTransfer.files[0]
-            if (f) setArquivo(f)
+            if (f) escolher(f)
           }}
         >
           <FileUp className="h-8 w-8" style={{ color: 'var(--cor-destaque)' }} />
@@ -94,7 +112,7 @@ export function EnvioArquivo({
               Arraste o arquivo aqui ou toque para escolher
             </span>
           )}
-          <input type="file" className="sr-only" disabled={enviando} onChange={(e) => setArquivo(e.target.files?.[0] ?? null)} />
+          <input type="file" className="sr-only" disabled={enviando} onChange={(e) => escolher(e.target.files?.[0] ?? null)} />
         </label>
 
         {enviando && (

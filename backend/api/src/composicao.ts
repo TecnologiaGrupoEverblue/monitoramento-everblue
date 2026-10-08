@@ -9,6 +9,7 @@ import { AutenticadorEntra } from './identidade/entra'
 import { FonteFotoEmCache, FonteFotoGraph, FonteFotoIntranet, FonteFotoNenhuma, type FonteFoto } from './identidade/fontesFoto'
 import { ClienteGraph } from './identidade/graph'
 import { ClienteIntranet } from './identidade/intranet'
+import { MonitorIntranet } from './identidade/monitorIntranet'
 import { ServicoAutorizacao } from './identidade/servicoAutorizacao'
 import { ServicoLogin } from './identidade/servicoLogin'
 import { AlertaRepositorio } from './repositorios/alertaRepositorio'
@@ -48,6 +49,7 @@ export interface Dependencias {
   estadoOidc: EstadoAssinado
   entra: AutenticadorEntra
   intranet: ClienteIntranet
+  monitorIntranet: MonitorIntranet
   fonteFoto: FonteFoto
   login: ServicoLogin
   autorizacao: ServicoAutorizacao
@@ -160,6 +162,7 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
     estadoOidc: new EstadoAssinado(cfg.sessaoSegredo, 'emon-oidc'),
     entra,
     intranet,
+    monitorIntranet: new MonitorIntranet(intranet, repos.auditoria),
     fonteFoto,
     login: new ServicoLogin(cfg, banco, entra, intranet, graph, repos.usuarios, repos.auditoria),
     autorizacao: new ServicoAutorizacao(cfg, repos.usuarios, repos.auditoria, intranet, graph),

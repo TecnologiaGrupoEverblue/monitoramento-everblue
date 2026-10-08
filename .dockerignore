@@ -6,6 +6,8 @@
 **/*.crt
 **/*.csr
 **/*.pem
+# Exceção: raízes PÚBLICAS de confiança (entram no trust store da imagem da API).
+!infrastructure/confianca/*.pem
 infrastructure/nginx/certs
 
 # Artefatos locais
