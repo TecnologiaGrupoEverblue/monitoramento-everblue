@@ -43,6 +43,20 @@ do limite (`--max-old-space-size`), `memswap_limit` igual ao limite de memória
 (sem swap no contêiner) e `no-new-privileges` em todos os serviços. O nginx tem
 verificação própria em `http://127.0.0.1/nginx-saude` (porta 80, sem redirecionar).
 
+Dois layouts de importação (1.1.5): a Importação Semanal aceita o modelo
+oficial OU a própria base do comitê ("Base Carteira - Monitoramento", aba
+"Análise da Carteira"). A base é convertida para o modelo e passa pela mesma
+validação: colunas lidas pelo NOME (ordem e colunas novas não importam);
+coluna essencial ausente recusa a carga; percentuais em fração viram pontos;
+"SEM BASE" na liquidez fica sem base; número com observação na célula usa o
+número (com aviso); prorrogações e operações saem do texto dos Alertas;
+QUATTUOR = carteira apartada com status NORMAL; aging calculado entre
+"Vencido desde" e a semana escolhida. Não são importados os campos que o
+sistema calcula (enquadramento, criticidade, alertas) nem os do comitê
+(decisões, planos, responsáveis). A prévia mostra o formato e o resumo da
+conversão. Migração 0007 (aditiva). O `atualizar.sh` passou a limpar o cache
+de montagem do Docker com mais de 7 dias após uma atualização bem-sucedida.
+
 Sem Gerente (1.1.4): linha importada com a coluna Gerente vazia fica sob o
 gerente **"Sem Gerente"** (com aviso na prévia da importação). A migração
 0006 corrige o que já tinha sido importado com gerente de nome vazio.

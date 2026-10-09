@@ -19,6 +19,13 @@ import { createHash, randomUUID } from 'node:crypto'
 import { parse as parseCsv } from 'csv-parse/sync'
 import { readSheet } from 'read-excel-file/node'
 import {
+  ABA_BASE_COMITE,
+  agingDoVencido,
+  converterBaseComite,
+  localizarCabecalhoBase,
+  pareceModeloOficial,
+  type FormatoImportacao,
+  type OpcoesValidacao,
   avaliarAlertasSnapshot,
   CARTEIRA_PADRAO_ID,
   classificarCliente,
@@ -96,6 +103,41 @@ export function detectarFormato(conteudo: Buffer): 'xlsx' | 'csv' | null {
 /** Nome exibível e seguro para os metadados (sem caminho, sem controle). */
 export { nomeSeguro } from './tipoArquivo'
 
+/** Planilha lida e já no layout do modelo, pronta para a validação. */
+export interface LeituraImportacao {
+  formato: FormatoImportacao
+  linhas: unknown[][]
+  opcoes: Pick<OpcoesValidacao, 'linhasOrigem' | 'avisosPorLinha' | 'agingDerivadoDoVencido'>
+  /** Colunas essenciais ausentes na base do comitê (carga recusada). */
+  colunasFaltando: string[]
+  observacoes: string[]
+}
+
+/**
+ * Dois layouts, uma regra: o modelo oficial segue direto; a base do comitê
+ * (aba "Análise da Carteira") é convertida para o modelo e passa pela MESMA
+ * validação. Qualquer outra coisa vai como modelo e a validação aponta as
+ * colunas que faltam.
+ */
+export async function lerPlanilhaImportacao(conteudo: Buffer, formato: 'xlsx' | 'csv'): Promise<LeituraImportacao> {
+  const primeira = await lerLinhasPlanilha(conteudo, formato)
+  const modelo = (linhas: unknown[][]): LeituraImportacao => ({ formato: 'MODELO', linhas, opcoes: {}, colunasFaltando: [], observacoes: [] })
+  if (pareceModeloOficial(primeira)) return modelo(primeira)
+  let base = primeira
+  if (formato === 'xlsx') {
+    base = await (readSheet(conteudo, ABA_BASE_COMITE) as Promise<unknown[][]>).catch(() => primeira)
+  }
+  if (localizarCabecalhoBase(base) < 0) return modelo(primeira)
+  const c = converterBaseComite(base)
+  return {
+    formato: 'BASE_COMITE',
+    linhas: c.linhas,
+    opcoes: { linhasOrigem: c.linhasOrigem, avisosPorLinha: c.avisosPorLinha, agingDerivadoDoVencido: true },
+    colunasFaltando: c.colunasFaltando,
+    observacoes: c.observacoes,
+  }
+}
+
 export async function lerLinhasPlanilha(conteudo: Buffer, formato: 'xlsx' | 'csv'): Promise<unknown[][]> {
   if (formato === 'xlsx') {
     return (await readSheet(conteudo)) as unknown[][]
@@ -165,7 +207,8 @@ export function construirSnapshotParcial(linha: LinhaValidada, semanaRef: string
     statusTranche,
     vencidoOficial: linha.vencidoOficial,
     vencidoDesde: linha.vencidoDesde,
-    agingCarteiraDias: Math.round(linha.agingCarteiraDias),
+    // Base do comitê: o aging depende da semana escolhida (pode mudar na prévia).
+    agingCarteiraDias: linha.agingDerivadoDoVencido ? agingDoVencido(linha.vencidoDesde, semanaRef) : Math.round(linha.agingCarteiraDias),
     prazoMedioCarteiraDias: Math.round(linha.prazoMedioCarteiraDias),
     il30: percOuNulo(linha.il30),
     il60: percOuNulo(linha.il60),
@@ -230,17 +273,20 @@ export class ServicoImportacao {
       const zip = inspecionarZip(arquivo.conteudo)
       if (!zip.ok) throw new ErroNegocio('O arquivo .xlsx foi recusado pela verificação de segurança. Salve a planilha de novo pelo Excel e envie outra vez.', 422, 'arquivo_recusado')
     }
-    let linhas: unknown[][]
+    let leitura: LeituraImportacao
     try {
-      linhas = await lerLinhasPlanilha(arquivo.conteudo, formato)
+      leitura = await lerPlanilhaImportacao(arquivo.conteudo, formato)
     } catch {
-      throw new ErroNegocio('Não foi possível ler o arquivo. Confira se é um .xlsx ou .csv válido, gerado a partir do modelo.', 422, 'arquivo_ilegivel')
+      throw new ErroNegocio('Não foi possível ler o arquivo. Confira se é um .xlsx ou .csv válido: o modelo de importação ou a base do comitê (aba "Análise da Carteira").', 422, 'arquivo_ilegivel')
     }
-    if (linhas.length - 1 > this.limites.maxLinhas) {
+    if (leitura.linhas.length - 1 > this.limites.maxLinhas) {
       throw new ErroNegocio(`A planilha tem mais de ${this.limites.maxLinhas} linhas. Divida o arquivo.`, 413, 'linhas_demais')
     }
     const lim = await this.limiares()
-    const resultado = separarCnpjsRepetidos(validarLinhasPlanilha(linhas, { valorSimbolico: lim.AVISO_VALOR_SIMBOLICO }))
+    const resultado =
+      leitura.colunasFaltando.length > 0
+        ? { colunasFaltando: leitura.colunasFaltando, validas: [], comErro: [] }
+        : separarCnpjsRepetidos(validarLinhasPlanilha(leitura.linhas, { valorSimbolico: lim.AVISO_VALOR_SIMBOLICO, ...leitura.opcoes }))
 
     // Original guardado ANTES de qualquer processamento de negócio: é a prova
     // de auditoria do dado que gerou (ou não) cada snapshot.
@@ -275,7 +321,17 @@ export class ServicoImportacao {
         tx,
       )
       await this.importacoes.criar(
-        { id: importacaoId, arquivoId, semanaRef, linhasValidas: resultado.validas, linhasComErro: resultado.comErro, colunasFaltando: resultado.colunasFaltando, criadoPor: usuario.id },
+        {
+          id: importacaoId,
+          arquivoId,
+          semanaRef,
+          linhasValidas: resultado.validas,
+          linhasComErro: resultado.comErro,
+          colunasFaltando: resultado.colunasFaltando,
+          formato: leitura.formato,
+          observacoes: leitura.observacoes,
+          criadoPor: usuario.id,
+        },
         tx,
       )
     })
@@ -285,7 +341,7 @@ export class ServicoImportacao {
       atorEmail: usuario.email,
       recursoTipo: 'importacao',
       recursoId: importacaoId,
-      detalhes: { arquivo: nome, sha256, linhasValidas: resultado.validas.length, linhasComErro: resultado.comErro.length },
+      detalhes: { arquivo: nome, sha256, formato: leitura.formato, linhasValidas: resultado.validas.length, linhasComErro: resultado.comErro.length },
     })
     return this.montarPreview(await this.carregar(importacaoId), semanaRef)
   }
@@ -399,6 +455,8 @@ export class ServicoImportacao {
       itens,
       colunasFaltando: registro.colunasFaltando,
       linhasComErro,
+      formato: registro.formato,
+      observacoes: registro.observacoes,
       totais: {
         totalLinhasValidas: itens.length,
         linhasProntas: prontos.length,

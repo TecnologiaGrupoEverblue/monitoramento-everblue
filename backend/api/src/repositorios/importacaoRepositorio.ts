@@ -1,4 +1,4 @@
-import type { LinhaComErro, LinhaValidada, PreviewImportacao } from '@monitoramento/dominio'
+import type { FormatoImportacao, LinhaComErro, LinhaValidada, PreviewImportacao } from '@monitoramento/dominio'
 import type { Executor } from '../infra/banco'
 
 export interface RegistroImportacao {
@@ -10,6 +10,8 @@ export interface RegistroImportacao {
   linhasValidas: LinhaValidada[]
   linhasComErro: LinhaComErro[]
   colunasFaltando: string[]
+  formato: FormatoImportacao
+  observacoes: string[]
   criadoPor: string
 }
 
@@ -18,9 +20,9 @@ export class ImportacaoRepositorio {
 
   async criar(r: Omit<RegistroImportacao, 'status' | 'nomeArquivo'>, executor: Executor = this.db): Promise<void> {
     await executor.query(
-      `INSERT INTO importacao (id, arquivo_id, semana_ref, linhas_validas, linhas_com_erro, colunas_faltando, criado_por)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7)`,
-      [r.id, r.arquivoId, r.semanaRef, JSON.stringify(r.linhasValidas), JSON.stringify(r.linhasComErro), r.colunasFaltando, r.criadoPor],
+      `INSERT INTO importacao (id, arquivo_id, semana_ref, linhas_validas, linhas_com_erro, colunas_faltando, formato, observacoes, criado_por)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9)`,
+      [r.id, r.arquivoId, r.semanaRef, JSON.stringify(r.linhasValidas), JSON.stringify(r.linhasComErro), r.colunasFaltando, r.formato, r.observacoes, r.criadoPor],
     )
   }
 
@@ -41,6 +43,8 @@ export class ImportacaoRepositorio {
       linhasValidas: l.linhas_validas,
       linhasComErro: l.linhas_com_erro,
       colunasFaltando: l.colunas_faltando,
+      formato: l.formato,
+      observacoes: l.observacoes ?? [],
       criadoPor: l.criado_por,
     }
   }

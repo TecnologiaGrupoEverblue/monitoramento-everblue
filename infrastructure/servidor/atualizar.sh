@@ -101,6 +101,13 @@ sudo mkdir -p "$BASE/evidencias"
 EVIDENCIA="$BASE/evidencias/atualizacao-$NOVA-$CARIMBO.log"
 if ./infrastructure/scripts/verificar.sh 2>&1 | sudo tee "$EVIDENCIA" >/dev/null; then
   ok "verificação sem falhas — evidência em $EVIDENCIA"
+  # Cache de montagem do Docker cresce a cada atualização (chegou a 13 GB em
+  # 10/2026). Só depois de uma atualização boa, e só o que tem mais de 7 dias:
+  # as montagens recentes continuam rápidas. Nunca toca em imagem em uso,
+  # contêiner, volume ou dados.
+  if LIVRE="$(sudo docker builder prune -f --filter until=168h 2>/dev/null | tail -1)"; then
+    ok "cache de montagem antigo limpo (${LIVRE:-nada a limpar})"
+  fi
 else
   aviso "verificação com falhas — veja $EVIDENCIA. Voltar: bash $RETORNAR"
 fi

@@ -185,6 +185,10 @@ export interface PreviewImportacao {
   itens: ItemPreviewImportacao[]
   colunasFaltando: string[]
   linhasComErro: LinhaComErro[]
+  /** Layout recebido: modelo oficial ou base do comitê (convertida). */
+  formato?: 'MODELO' | 'BASE_COMITE'
+  /** Resumo da conversão da base do comitê (aba, cabeçalho, colunas não importadas). */
+  observacoes?: string[]
   totais: {
     totalLinhasValidas: number
     linhasProntas: number

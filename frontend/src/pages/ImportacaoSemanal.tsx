@@ -33,6 +33,8 @@ export default function ImportacaoSemanal() {
   const [etapa, setEtapa] = useState<Etapa>({ fase: 'ocioso' })
   const [nomeArquivo, setNomeArquivo] = useState<string | null>(null)
   const [colunasFaltando, setColunasFaltando] = useState<string[]>([])
+  const [formatoArquivo, setFormatoArquivo] = useState<PreviewImportacao['formato']>(undefined)
+  const [observacoes, setObservacoes] = useState<string[]>([])
   const [linhasComErro, setLinhasComErro] = useState<LinhaComErro[]>([])
   const [preview, setPreview] = useState<PreviewImportacao | null>(null)
   const [confirmando, setConfirmando] = useState(false)
@@ -53,6 +55,8 @@ export default function ImportacaoSemanal() {
   function aplicarPreview(preparado: PreviewImportacao) {
     setColunasFaltando(preparado.colunasFaltando)
     setLinhasComErro(preparado.linhasComErro)
+    setFormatoArquivo(preparado.formato)
+    setObservacoes(preparado.observacoes ?? [])
     if (preparado.colunasFaltando.length > 0) {
       setPreview(null)
       setEtapa({ fase: 'ocioso' })
@@ -114,7 +118,8 @@ export default function ImportacaoSemanal() {
           Importação Semanal
         </h1>
         <p className="text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
-          Upload da posição semanal (.xlsx/.csv), validação, avisos de qualidade do dado, comparação com a semana anterior, alertas e
+          Upload da posição semanal (.xlsx/.csv) — no modelo de importação ou a própria base do comitê (aba "Análise da Carteira"), que é
+          convertida automaticamente —, validação, avisos de qualidade do dado, comparação com a semana anterior, alertas e
           classificação semanal (prioridade, enquadramento e criticidade pelas regras do comitê) — sem sobrescrever decisões manuais do
           comitê (planos de ação, pareceres do checklist, responsável).
         </p>
@@ -168,18 +173,33 @@ export default function ImportacaoSemanal() {
             </div>
             {nomeArquivo && (
               <p className="mt-2 text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
-                Arquivo: {nomeArquivo} · o original fica guardado no repositório de arquivos para auditoria.
+                Arquivo: {nomeArquivo}
+                {formatoArquivo === 'BASE_COMITE' ? ' · base do comitê, convertida para o modelo' : formatoArquivo === 'MODELO' ? ' · modelo de importação' : ''} · o
+                original fica guardado no repositório de arquivos para auditoria.
               </p>
+            )}
+            {formatoArquivo === 'BASE_COMITE' && observacoes.length > 0 && (
+              <ul className="mt-2 list-inside list-disc text-xs" style={{ color: 'var(--cor-texto-secundario)' }} aria-label="Como a base foi convertida">
+                {observacoes.map((o) => (
+                  <li key={o}>{o}</li>
+                ))}
+              </ul>
             )}
             {colunasFaltando.length > 0 && (
               <div className="mt-3 border-l-2 p-2.5 text-sm" style={{ borderColor: 'var(--cor-critico)', backgroundColor: 'var(--cor-critico-fundo)', color: 'var(--cor-critico)' }}>
-                <p className="font-semibold">Arquivo fora do modelo — coluna(s) não encontrada(s):</p>
+                <p className="font-semibold">
+                  {formatoArquivo === 'BASE_COMITE' ? 'Base do comitê sem coluna(s) essencial(is):' : 'Arquivo fora do modelo — coluna(s) não encontrada(s):'}
+                </p>
                 <ul className="list-inside list-disc">
                   {colunasFaltando.map((c) => (
                     <li key={c}>{c}</li>
                   ))}
                 </ul>
-                <p className="mt-1">Baixe a planilha modelo acima e preencha por cima dela para garantir os cabeçalhos corretos.</p>
+                <p className="mt-1">
+                  {formatoArquivo === 'BASE_COMITE'
+                    ? 'Confira se a coluna foi renomeada ou apagada na aba "Análise da Carteira". Nada foi importado.'
+                    : 'Baixe a planilha modelo acima e preencha por cima dela, ou envie a base do comitê com a aba "Análise da Carteira".'}
+                </p>
               </div>
             )}
           </Painel>

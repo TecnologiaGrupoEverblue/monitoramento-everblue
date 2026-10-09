@@ -26,7 +26,7 @@ async function cenario(semGerenteJaExiste: boolean) {
       VALUES ('c1', 'Um', '11.111.111/0001-11', 'g1', 'ge_vazio', 'p1', 'S', 'R', 'NORMAL', 'MEDIA', 'NORMAL', ''),
              ('c2', 'Dois', '22.222.222/0001-22', 'g1', 'ge1', 'p1', 'S', 'R', 'NORMAL', 'MEDIA', 'NORMAL', 'Joice');`)
     const r = await aplicarMigracoes(banco.pool, DIR)
-    expect(r.aplicadas).toEqual(['0006_sem_gerente.sql'])
+    expect(r.aplicadas).toEqual(['0006_sem_gerente.sql', '0007_importacao_formato.sql'])
     const { rows: gerentes } = await banco.pool.query(`SELECT id, nome FROM gerente ORDER BY nome`)
     const { rows: clientes } = await banco.pool.query(`SELECT c.id, g.nome AS gerente, c.responsavel FROM cliente c JOIN gerente g ON g.id = c.gerente_id ORDER BY c.id`)
     return { gerentes, clientes }

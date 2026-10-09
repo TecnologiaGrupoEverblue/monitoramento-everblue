@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { CAMPOS_IMPORTACAO } from '@monitoramento/dominio'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -145,6 +146,34 @@ describe.skipIf(!temBanco)('API HTTP', () => {
     expect(dup.statusCode).toBe(409)
     await expect(banco.pool.query(`UPDATE snapshot_semanal SET risco_cliente = 0`)).rejects.toThrow(/append-only/)
     await expect(banco.pool.query(`DELETE FROM auditoria`)).rejects.toThrow(/append-only/)
+  })
+
+  it('importação da base do comitê: convertida, prévia com o formato e aging pela semana', async () => {
+    const cookie = await sessaoCom('analista')
+    const xlsx = readFileSync(new URL('./fixtures/base-comite-sintetica.xlsx', import.meta.url))
+    const limite = '----base'
+    const corpo = Buffer.concat([
+      Buffer.from(`--${limite}\r\nContent-Disposition: form-data; name="semanaRef"\r\n\r\n2099-01-05\r\n--${limite}\r\nContent-Disposition: form-data; name="arquivo"; filename="Base Carteira - Monitoramento.xlsx"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      xlsx,
+      Buffer.from(`\r\n--${limite}--\r\n`),
+    ])
+    const envio = await app.inject({ method: 'POST', url: '/api/v1/importacoes', headers: { cookie, origin: ORIGEM, 'content-type': `multipart/form-data; boundary=${limite}` }, payload: corpo })
+    expect(envio.statusCode).toBe(200)
+    const previa = envio.json()
+    expect(previa).toMatchObject({ formato: 'BASE_COMITE', totais: { totalLinhasValidas: 3 } })
+    expect(previa.observacoes.join(' ')).toMatch(/Análise da Carteira/)
+    expect(previa.linhasComErro).toEqual([{ linha: 9, erros: [expect.stringMatching(/Risco do Cliente/)] }])
+
+    // Semana trocada na prévia: o aging acompanha.
+    const outra = await app.inject({ method: 'POST', url: `/api/v1/importacoes/${previa.importacaoId}/previa`, headers: { cookie, origin: ORIGEM }, payload: { semanaRef: '2099-01-12' } })
+    expect(outra.statusCode).toBe(200)
+    const ok = await app.inject({ method: 'POST', url: `/api/v1/importacoes/${previa.importacaoId}/confirmar`, headers: { cookie, origin: ORIGEM }, payload: { semanaRef: '2099-01-12' } })
+    expect(ok.json()).toMatchObject({ snapshotsGravados: 3 })
+    const { rows } = await banco.pool.query(
+      `SELECT s.aging_carteira_dias, s.vencido_desde::text, i.formato FROM snapshot_semanal s JOIN cliente c ON c.id = s.cliente_id JOIN importacao i ON i.id = s.importacao_id WHERE c.nome = 'Alfa Teste Ltda'`,
+    )
+    const esperado = Math.round((Date.parse('2099-01-12') - Date.parse('2026-09-22')) / 86_400_000)
+    expect(rows).toEqual([{ aging_carteira_dias: esperado, vencido_desde: '2026-09-22', formato: 'BASE_COMITE' }])
   })
 
   it('arquivo que não é planilha é recusado pelo conteúdo', async () => {

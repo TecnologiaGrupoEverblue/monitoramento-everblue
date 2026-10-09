@@ -1,4 +1,3 @@
-import { format } from 'date-fns'
 import type { StatusCliente, StatusProposta } from '../models/types'
 import { TIPOS_RESTRITIVO, type LinhaRestritivo, type TipoRestritivo } from '../regras/restritivos'
 
@@ -140,6 +139,9 @@ export interface LinhaValidada {
   restritivosPorTipo?: LinhaRestritivo[] | null
   /** Avisos de qualidade: não impedem a importação, mas aparecem na prévia. */
   avisos?: string[]
+  /** Aging calculado na gravação: dias entre "Vencido desde" e a semana de
+   * referência (base do comitê, que não traz o aging em dias). */
+  agingDerivadoDoVencido?: boolean
 }
 
 export interface LinhaComErro {
@@ -156,6 +158,13 @@ export interface ResultadoParse {
 export interface OpcoesValidacao {
   /** Tranche ou limite até este valor (R$) é tratado como simbólico (aviso). */
   valorSimbolico?: number
+  /** Número da linha NO ARQUIVO ORIGINAL de cada linha de dados (índice 0 =
+   * primeira linha após o cabeçalho) — para a base do comitê, convertida. */
+  linhasOrigem?: number[]
+  /** Avisos da conversão, por linha de dados (mesmo índice de `linhasOrigem`). */
+  avisosPorLinha?: string[][]
+  /** As linhas vêm da base do comitê: o aging é derivado do "Vencido desde". */
+  agingDerivadoDoVencido?: boolean
 }
 
 /** `undefined` = célula vazia; `null` = havia texto que não é número. */
@@ -172,7 +181,9 @@ function parseNumero(valor: unknown): number | null | undefined {
 
 function parseData(valor: unknown): string | null {
   if (valor === null || valor === undefined || valor === '') return null
-  if (valor instanceof Date) return format(valor, 'yyyy-MM-dd')
+  // O leitor de .xlsx entrega a data como meia-noite UTC: ler em UTC, senão um
+  // servidor a oeste de Greenwich grava o dia anterior.
+  if (valor instanceof Date) return Number.isNaN(valor.getTime()) ? null : valor.toISOString().slice(0, 10)
   const texto = String(valor).trim()
   const match = texto.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
   if (match) {
@@ -185,7 +196,7 @@ function parseData(valor: unknown): string | null {
 }
 
 /** Sem acento, maiúsculo, espaços simples — para comparar rótulos. */
-function chaveTexto(valor: unknown): string {
+export function chaveTexto(valor: unknown): string {
   return String(valor ?? '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
@@ -254,9 +265,9 @@ export function validarLinhasPlanilha(linhas: unknown[][], opcoes: OpcoesValidac
     const vazia = linha.every((v) => v === '' || v === null || v === undefined)
     if (vazia) continue
 
-    const numeroLinha = i + 1
+    const numeroLinha = opcoes.linhasOrigem?.[i - 1] ?? i + 1
     const erros: string[] = []
-    const avisos: string[] = []
+    const avisos: string[] = [...(opcoes.avisosPorLinha?.[i - 1] ?? [])]
     const dados: Record<string, unknown> = {}
 
     for (const campo of presentes) {
@@ -399,6 +410,7 @@ export function validarLinhasPlanilha(linhas: unknown[][], opcoes: OpcoesValidac
       restritivos,
       restritivosPorTipo: porTipo.length > 0 ? porTipo : null,
       avisos,
+      ...(opcoes.agingDerivadoDoVencido ? { agingDerivadoDoVencido: true } : {}),
     } as LinhaValidada)
   }
 
