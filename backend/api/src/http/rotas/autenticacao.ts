@@ -4,14 +4,13 @@
  * link a partir de lugar nenhum, com limite de tentativas e auditoria
  * `excecao` — mesmo desenho da IA Everblue.
  */
-import type { SessaoUsuario } from '@monitoramento/dominio'
+import { esquemaLoginEmergencia, type SessaoUsuario } from '@monitoramento/dominio'
 import type { FastifyInstance, FastifyReply } from 'fastify'
-import { z } from 'zod'
 import type { Dependencias } from '../../composicao'
 import { COOKIE_ESTADO_OIDC, VALIDADE_ESTADO_S, type EstadoOidc } from '../../identidade/entra'
 import { LoginRecusado } from '../../identidade/servicoLogin'
 import { COOKIE_RENOVACAO, COOKIE_SESSAO } from '../../seguranca/sessao'
-import { destinoSeguro, exigir, ipDaRequisicao } from '../autenticacao'
+import { destinoSeguro, exigir, ipDaRequisicao, temAcessoGestao } from '../autenticacao'
 
 /** Motivos que a tela de login sabe exibir. A mensagem é escolhida por CHAVE
  * na interface — nunca um texto recebido pela URL (é assim que se convence
@@ -71,11 +70,7 @@ export async function rotasAutenticacao(app: FastifyInstance, deps: Dependencias
   }
   app.get('/oauth/oidc/callback', (request, reply) => tratarRetorno(request, reply))
 
-  const corpoEmergencia = z.object({
-    email: z.string().trim().toLowerCase().email().max(254),
-    senha: z.string().min(1).max(256),
-    destino: z.string().max(500).optional(),
-  })
+  const corpoEmergencia = esquemaLoginEmergencia
   app.post(
     '/api/v1/autenticacao/emergencia',
     { config: { rateLimit: { max: 10, timeWindow: '5 minutes' } } },
@@ -105,6 +100,8 @@ export async function rotasAutenticacao(app: FastifyInstance, deps: Dependencias
       departamento: ator.departamentoNome,
       origem: ator.origem,
       temFoto: deps.cfg.fotoFonte !== 'nenhuma' && ator.origem === 'entra',
+      nivelAcesso: ator.nivelAcessoCodigo ? { codigo: ator.nivelAcessoCodigo, nome: ator.nivelAcessoNome ?? ator.nivelAcessoCodigo } : null,
+      acessoGestao: temAcessoGestao(ator, deps.cfg.niveisAcessoGestao),
     }
   })
 

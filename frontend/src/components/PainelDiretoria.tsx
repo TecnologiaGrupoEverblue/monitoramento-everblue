@@ -55,7 +55,7 @@ export default function PainelDiretoria({ painel }: { painel: PainelSemanal }) {
         })}
       </div>
       {serie.length > 1 && (
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
           <div>
             <p className="mb-1 text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
               Críticos e planos atrasados

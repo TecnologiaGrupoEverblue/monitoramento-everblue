@@ -32,7 +32,7 @@ describe.skipIf(!temBanco)('migração 0004 sobre base existente', () => {
           manifesto_lastro_inconsistente, manifesto_transacao_nao_concluida, liquidado_no_periodo, recompras, perc_liquidado_no_prazo, atraso_medio_dias, restritivos)
         VALUES ('s1', 'c1', '2026-09-24', 10, 10, 10, 100, 'EM_ANALISE', 0, 0, 0, 'DENTRO_DO_LIMITE', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);`)
       const r = await aplicarMigracoes(banco.pool, DIR)
-      expect(r.aplicadas).toEqual(['0004_comite_classificacao_restritivos.sql', '0005_classificacao_nao_avaliados.sql', '0006_sem_gerente.sql', '0007_importacao_formato.sql'])
+      expect(r.aplicadas).toEqual(['0004_comite_classificacao_restritivos.sql', '0005_classificacao_nao_avaliados.sql', '0006_sem_gerente.sql', '0007_importacao_formato.sql', '0008_foto_bitfin.sql', '0009_mapa_garantias.sql', '0010_nivel_acesso_intranet.sql', '0011_integracao_execucao.sql', '0012_retencao_fotos.sql', '0013_substituicao_posicao.sql'])
       const { rows: cli } = await banco.pool.query('SELECT id, carteira_id FROM cliente ORDER BY id')
       expect(cli).toEqual([{ id: 'c1', carteira_id: 'car_everblue' }, { id: 'c2', carteira_id: 'car_quattuor' }])
       const { rows: docs } = await banco.pool.query('SELECT cliente_id, principal FROM cliente_documento ORDER BY cliente_id')

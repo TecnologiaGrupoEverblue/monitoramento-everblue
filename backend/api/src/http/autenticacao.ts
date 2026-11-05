@@ -55,6 +55,40 @@ export function exigir(deps: Dependencias, minimo: PerfilAcesso): preHandlerAsyn
   }
 }
 
+/**
+ * Foto do Bitfin, Mapa de Garantias e Parâmetros (decisão de 30/10/2026):
+ * só para quem tem, na Intranet, um dos perfis de NIVEIS_ACESSO_GESTAO
+ * (Administrador, Diretoria, Gerente). Conta de emergência local com perfil
+ * admin também entra (é o acesso de quando a Intranet está fora).
+ * Sem perfil informado pela Intranet = sem acesso (fail-closed).
+ */
+export function temAcessoGestao(usuario: Usuario, niveis: string[]): boolean {
+  if (usuario.origem === 'local' && usuario.perfil === 'admin') return true
+  return Boolean(usuario.nivelAcessoCodigo && niveis.includes(usuario.nivelAcessoCodigo))
+}
+
+/** `exigir(minimo)` + acesso às áreas de gestão. */
+export function exigirGestao(deps: Dependencias, minimo: PerfilAcesso): preHandlerAsyncHookHandler {
+  const base = exigir(deps, minimo)
+  return async function (this: FastifyInstance, request: FastifyRequest, reply: FastifyReply) {
+    await base.call(this, request, reply)
+    const ator = request.ator!
+    if (!temAcessoGestao(ator, deps.cfg.niveisAcessoGestao)) {
+      await deps.repos.auditoria.registrar({
+        acao: 'acesso.negado',
+        resultado: 'negado',
+        atorId: ator.id,
+        atorEmail: ator.email,
+        origemIp: ipDaRequisicao(request),
+        recursoTipo: 'rota',
+        recursoId: `${request.method} ${request.routeOptions.url ?? request.url}`,
+        motivo: `perfil da Intranet ${ator.nivelAcessoCodigo ?? 'não informado'} fora de ${deps.cfg.niveisAcessoGestao.join(',')}`,
+      })
+      throw new ErroHttp(403, 'Esta área é restrita a Administrador, Diretoria e Gerente (perfil da Intranet).', 'acesso_gestao')
+    }
+  }
+}
+
 /** Caminho interno seguro — impede redirecionamento para site externo. */
 export function destinoSeguro(valor: unknown): string {
   if (typeof valor !== 'string' || !valor.startsWith('/') || valor.startsWith('//') || valor.includes('\\')) return '/'

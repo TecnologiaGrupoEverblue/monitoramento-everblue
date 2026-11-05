@@ -38,8 +38,17 @@ import { ServicoChecklist } from './servicos/servicoChecklist'
 import { ServicoComite } from './servicos/servicoComite'
 import { ServicoDecisao } from './servicos/servicoDecisao'
 import { ServicoArquivos } from './servicos/servicoArquivos'
+import { ServicoExpurgoFotos } from './servicos/servicoExpurgoFotos'
 import { exportadorCarteira, exportadorPlanos, ServicoExportacao } from './servicos/servicoExportacao'
 import { ServicoImportacao } from './servicos/servicoImportacao'
+import { LeitorBitfinSqlServer, type LeitorBitfin } from './infra/bitfin'
+import { FotoRepositorio } from './repositorios/fotoRepositorio'
+import { AgendadorFoto, ServicoFotoBitfin } from './servicos/servicoFotoBitfin'
+import { IntegracaoRepositorio } from './repositorios/integracaoRepositorio'
+import type { GatewayLegado } from './infra/gatewayLegado'
+import { MapaRepositorio } from './repositorios/mapaRepositorio'
+import { ServicoMapaGarantias } from './servicos/servicoMapaGarantias'
+import { criarEnviadorEmail, type EnviadorEmail } from './infra/email'
 
 export interface Dependencias {
   cfg: Configuracao
@@ -69,6 +78,9 @@ export interface Dependencias {
     checklist: ChecklistRepositorio
     restritivos: RestritivoRepositorio
     classificacoes: ClassificacaoRepositorio
+    fotos: FotoRepositorio
+    mapa: MapaRepositorio
+    integracao: IntegracaoRepositorio
   }
   servicos: {
     carteira: ServicoCarteira
@@ -80,10 +92,17 @@ export interface Dependencias {
     exportacao: ServicoExportacao
     planos: ServicoPlanos
     restritivos: ServicoRestritivos
+    fotoBitfin: ServicoFotoBitfin
+    mapaGarantias: ServicoMapaGarantias
+    expurgoFotos: ServicoExpurgoFotos
   }
+  leitorBitfin: LeitorBitfin
+  /** Gateway do Bitfin (estado do disjuntor/fila) — null com leitor de teste. */
+  gatewayBitfin: GatewayLegado | null
+  agendadorFoto: AgendadorFoto
 }
 
-export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Banco; armazenamento?: ArmazenamentoArquivos; fonteFoto?: FonteFoto } = {}): Dependencias {
+export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Banco; armazenamento?: ArmazenamentoArquivos; fonteFoto?: FonteFoto; leitorBitfin?: LeitorBitfin; email?: EnviadorEmail; log?: { info: (o: object, m: string) => void; error: (o: object, m: string) => void } } = {}): Dependencias {
   const banco = sobrescritas.banco ?? criarBanco(cfg.databaseUrl, cfg.databasePoolMax)
   const armazenamento = sobrescritas.armazenamento ?? new ArmazenamentoS3(cfg.minio)
   const db = banco.pool
@@ -104,6 +123,9 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
     checklist: new ChecklistRepositorio(db),
     restritivos: new RestritivoRepositorio(db),
     classificacoes: new ClassificacaoRepositorio(db),
+    fotos: new FotoRepositorio(db),
+    mapa: new MapaRepositorio(db),
+    integracao: new IntegracaoRepositorio(db, cfg.ambiente),
   }
 
   const entra = new AutenticadorEntra(cfg)
@@ -122,28 +144,51 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
     banco, repos.comites, repos.planos, repos.clientes, repos.alertas, repos.snapshots, repos.cadastros, carteira,
     repos.classificacoes, repos.checklist, repos.eventos, repos.restritivos,
   )
+  const importacao = new ServicoImportacao(
+    banco,
+    armazenamento,
+    arquivoRepositorio,
+    new ImportacaoRepositorio(db),
+    repos.clientes,
+    repos.snapshots,
+    repos.cadastros,
+    repos.configuracoes,
+    repos.planos,
+    repos.eventos,
+    repos.alertas,
+    repos.auditoria,
+    cfg.importacao,
+    repos.restritivos,
+    repos.classificacoes,
+  )
+  const expurgoFotos = new ServicoExpurgoFotos(banco, arquivos, repos.auditoria, cfg.retencaoFotoTesteDias, sobrescritas.log)
+  const leitorBitfin = sobrescritas.leitorBitfin ?? new LeitorBitfinSqlServer(cfg.bitfin, (e) => repos.integracao.registrar(e), sobrescritas.log)
+  const mapaGarantias = new ServicoMapaGarantias(repos.mapa, sobrescritas.email ?? criarEnviadorEmail(cfg), armazenamento, arquivoRepositorio, repos.auditoria, sobrescritas.log, leitorBitfin)
+  const fotoBitfin = new ServicoFotoBitfin(
+    leitorBitfin,
+    repos.fotos,
+    importacao,
+    repos.clientes,
+    repos.snapshots,
+    repos.comites,
+    repos.classificacoes,
+    armazenamento,
+    arquivoRepositorio,
+    repos.auditoria,
+    sobrescritas.log,
+    { documentos: () => mapaGarantias.documentos(), gravar: (fotoId, docs, dados) => repos.mapa.gravarFotoMapa(fotoId, docs, dados) },
+  )
+  fotoBitfin.aoConcluirAgendada((execucao) => mapaGarantias.enviarDiario(execucao))
+  fotoBitfin.aoFalharAgendada((execucao) => mapaGarantias.avisarFalhaDaFoto(execucao))
   const servicos = {
     carteira,
-    checklist: new ServicoChecklist(repos.clientes, repos.snapshots, repos.planos, repos.alertas, repos.carteira, repos.checklist, carteira, repos.restritivos),
+    checklist: new ServicoChecklist(repos.clientes, repos.snapshots, repos.planos, repos.alertas, repos.carteira, repos.checklist, carteira, repos.restritivos, repos.fotos),
     comite,
     decisao: new ServicoDecisao(banco, repos.planos, repos.eventos, repos.clientes, repos.auditoria, () => comite.garantirProximoPlanejado()),
-    importacao: new ServicoImportacao(
-      banco,
-      armazenamento,
-      arquivoRepositorio,
-      new ImportacaoRepositorio(db),
-      repos.clientes,
-      repos.snapshots,
-      repos.cadastros,
-      repos.configuracoes,
-      repos.planos,
-      repos.eventos,
-      repos.alertas,
-      repos.auditoria,
-      cfg.importacao,
-      repos.restritivos,
-      repos.classificacoes,
-    ),
+    importacao,
+    fotoBitfin,
+    mapaGarantias,
+    expurgoFotos,
     planos: new ServicoPlanos(banco, repos.planos, repos.eventos, repos.auditoria),
     restritivos: new ServicoRestritivos(banco, repos.restritivos, repos.clientes, repos.eventos, repos.alertas, repos.configuracoes, repos.auditoria, repos.snapshots),
     arquivos,
@@ -169,5 +214,8 @@ export function comporDependencias(cfg: Configuracao, sobrescritas: { banco?: Ba
     cofre,
     repos,
     servicos,
+    leitorBitfin,
+    gatewayBitfin: leitorBitfin instanceof LeitorBitfinSqlServer ? leitorBitfin.gateway : null,
+    agendadorFoto: new AgendadorFoto(fotoBitfin, repos.fotos, sobrescritas.log ?? { info: () => {}, error: () => {} }, 60_000, expurgoFotos),
   }
 }

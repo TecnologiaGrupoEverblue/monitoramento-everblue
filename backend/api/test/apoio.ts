@@ -16,6 +16,8 @@ export function configTeste(extra: Record<string, string> = {}): Configuracao {
     // Vetor de compatibilidade da IA Everblue (test_assinatura_interna.py).
     DIRETORIO_CLIENT_ID: '22222222-2222-4222-8222-222222222222',
     DIRETORIO_INTEGRATION_SECRET: 'snjKGvXDq_tlev7gZ8i5wWeTH3qUw1YFlZ-H7DGkxDY',
+    // Testes da 1.1 exercitam a importação por planilha; a 1.2 a desliga por padrão.
+    IMPORTACAO_PLANILHA_HABILITADA: 'true',
     ...extra,
   })
 }

@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { invalidar } from '../consultas'
 import type { ClienteEnriquecido, StatusCliente } from '../models/types'
 import { useSessao } from '../contexts/SessaoContext'
 import ModoRevisao from './ModoRevisao'
@@ -13,9 +15,10 @@ export default function BotaoModoRevisao({
 }: {
   clientes: ClienteEnriquecido[]
   statusAtual: StatusCliente
-  aoConcluir: () => void
+  aoConcluir?: () => void
 }) {
   const [aberto, setAberto] = useState(false)
+  const clienteConsultas = useQueryClient()
   const { pode } = useSessao()
   // Registrar decisões exige perfil de analista; consulta segue liberada nas telas.
   if (!pode('analista')) return null
@@ -35,7 +38,10 @@ export default function BotaoModoRevisao({
           statusAtual={statusAtual}
           aoFechar={(houveDecisoes) => {
             setAberto(false)
-            if (houveDecisoes) aoConcluir()
+            if (houveDecisoes) {
+              void invalidar(clienteConsultas, 'carteira')
+              aoConcluir?.()
+            }
           }}
         />
       )}

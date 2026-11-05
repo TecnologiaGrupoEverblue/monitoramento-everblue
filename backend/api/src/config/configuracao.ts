@@ -38,6 +38,11 @@ const esquema = z.object({
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL é obrigatória'),
   DATABASE_POOL_MAX: inteiro(10, 1, 100),
+  /** Orçamento agregado do PostgreSQL (docs/CONEXOES-BANCO.md): conexões
+   * aprovadas para TODOS os consumidores do Monitoramento (max_connections=50
+   * menos reserva de superusuário e margem). API + migração + linha de comando
+   * acima disso recusa o boot. */
+  DATABASE_CONEXOES_APROVADAS: inteiro(40, 1, 1000),
 
   SESSAO_SEGREDO: z.string().min(32, 'SESSAO_SEGREDO precisa ter ao menos 32 caracteres (openssl rand -hex 32)'),
   SESSAO_HORAS: inteiro(8, 1, 24),
@@ -94,6 +99,57 @@ const esquema = z.object({
   ARQUIVOS_EXTENSOES_BLOQUEADAS: texto(),
   IMPORTACAO_MAX_LINHAS: inteiro(20000, 1, 200000),
 
+  /** Bitfin (SQL Server de produção), lido SOMENTE pela foto. Senha só no .env do servidor. */
+  BITFIN_SERVIDOR: texto(),
+  BITFIN_PORTA: inteiro(1433, 1, 65535),
+  BITFIN_BANCO: texto('UNLTD_EVERBLUE'),
+  BITFIN_USUARIO: texto(),
+  BITFIN_SENHA: texto(),
+  /** Conexão igual à da Intranet: canal cifrado sem validar o certificado do
+   * SQL Server (decisão do usuário em 29/10/2026, ADR-014). */
+  BITFIN_CONFIAR_CERTIFICADO: z
+    .string()
+    .optional()
+    .transform((v) => (v === undefined || v.trim() === '' ? true : ['1', 'true', 'sim', 'yes'].includes(v.trim().toLowerCase()))),
+  BITFIN_TIMEOUT_S: inteiro(180, 5, 1800),
+  /** Fotos de TESTE (sem posição gravada e sem Mapa enviado) saem depois deste
+   * prazo; as que gravaram posição ou geraram Mapa são permanentes (ADR-021).
+   * Piso de 90 dias também no banco (migração 0012). */
+  RETENCAO_FOTO_TESTE_DIAS: inteiro(90, 90, 3650),
+  // Proteção do Bitfin (padrão corporativo de conexões, ADR-020): por classe
+  // de consulta, fila limitada e disjuntor. O teto da foto (BITFIN_TIMEOUT_S)
+  // vale por consulta; a foto inteira tem prazo total próprio.
+  BITFIN_PRAZO_FOTO_S: inteiro(900, 30, 3600),
+  BITFIN_TIMEOUT_NOMES_S: inteiro(15, 2, 120),
+  BITFIN_FILA_MAX: inteiro(3, 0, 20),
+  BITFIN_ESPERA_FILA_FOTO_S: inteiro(60, 1, 600),
+  BITFIN_ESPERA_FILA_NOMES_S: inteiro(10, 1, 120),
+  BITFIN_DISJUNTOR_FALHAS: inteiro(3, 1, 20),
+  BITFIN_DISJUNTOR_ABERTO_S: inteiro(300, 10, 3600),
+  /** Desliga a importação por planilha (1.2: os dados vêm do Bitfin). */
+  IMPORTACAO_PLANILHA_HABILITADA: booleano,
+
+  /** Envio de e-mail (Mapa de Garantias). `desligado` registra o envio como
+   * não enviado — nunca finge sucesso. */
+  EMAIL_TRANSPORTE: z.enum(['desligado', 'smtp', 'graph']).default('desligado'),
+  EMAIL_REMETENTE: texto(),
+  EMAIL_REMETENTE_NOME: texto('Monitoramento Everblue'),
+  SMTP_HOST: texto(),
+  SMTP_PORTA: inteiro(587, 1, 65535),
+  /** true = TLS direto (porta 465); false = STARTTLS obrigatório (porta 587). */
+  SMTP_TLS_DIRETO: booleano,
+  SMTP_USUARIO: texto(),
+  SMTP_SENHA: texto(),
+  EMAIL_TIMEOUT_S: inteiro(30, 5, 300),
+  /** Perfis de acesso da Intranet (code do accessLevel) que veem Foto do
+   * Bitfin, Mapa de Garantias e Parâmetros. Decisão de 30/10/2026: Administrador,
+   * Diretoria e Gerente. */
+  NIVEIS_ACESSO_GESTAO: texto('admin,director,manager'),
+  /** App Registration para e-mail (Mail.Send de aplicação). Vazios usam ENTRA_*. */
+  GRAPH_MAIL_TENANT_ID: texto(),
+  GRAPH_MAIL_CLIENT_ID: texto(),
+  GRAPH_MAIL_CLIENT_SECRET: texto(),
+
   ADMIN_EMAIL: texto(),
   LOGIN_MAX_TENTATIVAS: inteiro(5, 1, 50),
   LOGIN_BLOQUEIO_MINUTOS: inteiro(15, 1, 1440),
@@ -142,7 +198,38 @@ export interface Configuracao {
     bucket: string
     objectLock: boolean
   }
-  importacao: { maxBytes: number; maxLinhas: number }
+  importacao: { maxBytes: number; maxLinhas: number; planilhaHabilitada: boolean }
+  retencaoFotoTesteDias: number
+  /** Códigos de accessLevel da Intranet com acesso às áreas de gestão. */
+  niveisAcessoGestao: string[]
+  email: {
+    transporte: 'desligado' | 'smtp' | 'graph'
+    remetente: string
+    remetenteNome: string
+    smtp: { host: string; porta: number; tlsDireto: boolean; usuario: string; senha: string }
+    timeoutMs: number
+    /** App Registration usada no envio pelo Graph (GRAPH_MAIL_* ou, vazios, ENTRA_*). */
+    graph: { tenantId: string; clientId: string; clientSecret: string; origem: 'GRAPH_MAIL' | 'ENTRA' }
+  }
+  bitfin: {
+    servidor: string
+    porta: number
+    banco: string
+    usuario: string
+    senha: string
+    confiarCertificado: boolean
+    timeoutMs: number
+    configurado: boolean
+    protecao: {
+      prazoFotoMs: number
+      timeoutNomesMs: number
+      filaMax: number
+      esperaFilaFotoMs: number
+      esperaFilaNomesMs: number
+      disjuntorFalhas: number
+      disjuntorAbertoMs: number
+    }
+  }
   arquivos: { maxBytes: number; extensoesBloqueadas: string[] }
   adminEmail: string
   login: { maxTentativas: number; bloqueioMinutos: number }
@@ -166,6 +253,12 @@ export function carregarConfiguracao(ambiente: NodeJS.ProcessEnv = process.env):
     throw new Error(`Configuração inválida no .env:\n${problemas}`)
   }
   const e = resultado.data
+  // Teto agregado: API (1 processo × DATABASE_POOL_MAX) + migração (2) + linha
+  // de comando eventual (2) + limpeza/diagnóstico (2) ≤ capacidade aprovada.
+  const tetoTotalPg = e.DATABASE_POOL_MAX + 6
+  if (tetoTotalPg > e.DATABASE_CONEXOES_APROVADAS) {
+    throw new Error(`Orçamento de conexões do PostgreSQL excedido: API ${e.DATABASE_POOL_MAX} + 6 de jobs = ${tetoTotalPg} > ${e.DATABASE_CONEXOES_APROVADAS} aprovadas (DATABASE_CONEXOES_APROVADAS).`)
+  }
   if (!perfilValido(e.ENTRA_PERFIL_PADRAO)) {
     throw new Error(`ENTRA_PERFIL_PADRAO inválido: "${e.ENTRA_PERFIL_PADRAO}".`)
   }
@@ -173,6 +266,20 @@ export function carregarConfiguracao(ambiente: NodeJS.ProcessEnv = process.env):
   const producao = e.AMBIENTE === 'producao'
   if (producao && !e.COOKIE_SEGURO) {
     throw new Error('Em produção COOKIE_SEGURO=true é obrigatório: sessão sem TLS não é aceitável.')
+  }
+  if (e.EMAIL_TRANSPORTE !== 'desligado' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.EMAIL_REMETENTE)) {
+    throw new Error('EMAIL_REMETENTE precisa ser um e-mail válido quando EMAIL_TRANSPORTE está ligado.')
+  }
+  if (e.EMAIL_TRANSPORTE === 'smtp' && !e.SMTP_HOST) throw new Error('SMTP_HOST é obrigatório com EMAIL_TRANSPORTE=smtp.')
+  const graphMail = [e.GRAPH_MAIL_TENANT_ID, e.GRAPH_MAIL_CLIENT_ID, e.GRAPH_MAIL_CLIENT_SECRET].filter((v) => v.trim() !== '').length
+  if (graphMail !== 0 && graphMail !== 3) throw new Error('GRAPH_MAIL_TENANT_ID, GRAPH_MAIL_CLIENT_ID e GRAPH_MAIL_CLIENT_SECRET vão juntos: preencha os três ou deixe os três vazios.')
+  const credGraph = graphMail === 3
+    ? { tenantId: e.GRAPH_MAIL_TENANT_ID.trim(), clientId: e.GRAPH_MAIL_CLIENT_ID.trim(), clientSecret: e.GRAPH_MAIL_CLIENT_SECRET, origem: 'GRAPH_MAIL' as const }
+    : { tenantId: e.ENTRA_TENANT_ID, clientId: e.ENTRA_CLIENT_ID, clientSecret: e.ENTRA_CLIENT_SECRET, origem: 'ENTRA' as const }
+  const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (e.EMAIL_TRANSPORTE === 'graph') {
+    if (!credGraph.tenantId || !credGraph.clientId || !credGraph.clientSecret) throw new Error('EMAIL_TRANSPORTE=graph precisa de GRAPH_MAIL_TENANT_ID, GRAPH_MAIL_CLIENT_ID e GRAPH_MAIL_CLIENT_SECRET (ou ENTRA_*).')
+    if (!guid.test(credGraph.tenantId) || !guid.test(credGraph.clientId)) throw new Error(`${credGraph.origem}_TENANT_ID e ${credGraph.origem}_CLIENT_ID precisam estar no formato GUID.`)
   }
   const diretorioUrl = e.DIRETORIO_URL.replace(/\/+$/, '')
   const diretorioClientId = (e.DIRETORIO_CLIENT_ID || e.ENTRA_CLIENT_ID).trim().toLowerCase()
@@ -230,7 +337,41 @@ export function carregarConfiguracao(ambiente: NodeJS.ProcessEnv = process.env):
       bucket: e.MINIO_BUCKET,
       objectLock: e.MINIO_OBJECT_LOCK,
     },
-    importacao: { maxBytes: e.IMPORTACAO_MAX_MB * 1024 * 1024, maxLinhas: e.IMPORTACAO_MAX_LINHAS },
+    importacao: { maxBytes: e.IMPORTACAO_MAX_MB * 1024 * 1024, maxLinhas: e.IMPORTACAO_MAX_LINHAS, planilhaHabilitada: e.IMPORTACAO_PLANILHA_HABILITADA },
+    retencaoFotoTesteDias: e.RETENCAO_FOTO_TESTE_DIAS,
+    niveisAcessoGestao: (() => {
+      const lista = e.NIVEIS_ACESSO_GESTAO.split(',').map((v) => v.trim().toLowerCase()).filter(Boolean)
+      for (const v of lista) if (!/^[a-z][a-z0-9_]{0,31}$/.test(v)) throw new Error(`NIVEIS_ACESSO_GESTAO inválido: "${v}".`)
+      if (lista.length === 0) throw new Error('NIVEIS_ACESSO_GESTAO não pode ficar vazio.')
+      return lista
+    })(),
+    email: {
+      transporte: e.EMAIL_TRANSPORTE,
+      remetente: e.EMAIL_REMETENTE.toLowerCase(),
+      remetenteNome: e.EMAIL_REMETENTE_NOME,
+      smtp: { host: e.SMTP_HOST, porta: e.SMTP_PORTA, tlsDireto: e.SMTP_TLS_DIRETO, usuario: e.SMTP_USUARIO, senha: e.SMTP_SENHA },
+      timeoutMs: e.EMAIL_TIMEOUT_S * 1000,
+      graph: credGraph,
+    },
+    bitfin: {
+      servidor: e.BITFIN_SERVIDOR,
+      porta: e.BITFIN_PORTA,
+      banco: e.BITFIN_BANCO,
+      usuario: e.BITFIN_USUARIO,
+      senha: e.BITFIN_SENHA,
+      confiarCertificado: e.BITFIN_CONFIAR_CERTIFICADO,
+      timeoutMs: e.BITFIN_TIMEOUT_S * 1000,
+      configurado: Boolean(e.BITFIN_SERVIDOR && e.BITFIN_USUARIO && e.BITFIN_SENHA),
+      protecao: {
+        prazoFotoMs: e.BITFIN_PRAZO_FOTO_S * 1000,
+        timeoutNomesMs: e.BITFIN_TIMEOUT_NOMES_S * 1000,
+        filaMax: e.BITFIN_FILA_MAX,
+        esperaFilaFotoMs: e.BITFIN_ESPERA_FILA_FOTO_S * 1000,
+        esperaFilaNomesMs: e.BITFIN_ESPERA_FILA_NOMES_S * 1000,
+        disjuntorFalhas: e.BITFIN_DISJUNTOR_FALHAS,
+        disjuntorAbertoMs: e.BITFIN_DISJUNTOR_ABERTO_S * 1000,
+      },
+    },
     arquivos: {
       maxBytes: (e.ARQUIVOS_MAX_MB > 0 ? e.ARQUIVOS_MAX_MB : ARQUIVOS_MAX_MB_PADRAO) * 1024 * 1024,
       extensoesBloqueadas: [

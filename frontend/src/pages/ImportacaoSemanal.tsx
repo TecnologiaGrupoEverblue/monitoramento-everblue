@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { consultas, invalidar } from '../consultas'
 import { format } from 'date-fns'
 import { Painel } from '../components/ui/Card'
 import { StatusBadge } from '../components/ui/Badges'
 import { useSessao } from '../contexts/SessaoContext'
-import { useFiltros } from '../contexts/FiltrosContext'
 import { ErroApi } from '../api/cliente'
-import { comiteAtaRepository, importacaoRepository, type PreviewImportacao } from '../repositories'
+import { importacaoRepository, type PreviewImportacao } from '../repositories'
 import type { LinhaComErro } from '../models/types'
 import { formatarMoeda, formatarPercentual } from '../utils/formatters'
 
@@ -26,10 +27,13 @@ function CardResumo({ titulo, valor, cor }: { titulo: string; valor: string; cor
 
 export default function ImportacaoSemanal() {
   const { usuario, pode } = useSessao()
-  const { recarregarDados } = useFiltros()
+  const clienteConsultas = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [semanaRef, setSemanaRef] = useState<string>(format(new Date(), 'yyyy-MM-dd'))
-  const [semanaRefCarregada, setSemanaRefCarregada] = useState(false)
+  // Sem escolha do usuário, vale a data do próximo comitê planejado (ou hoje).
+  const proximoQ = useQuery(consultas.proximoComite())
+  const [semanaEscolhida, setSemanaRef] = useState<string | null>(null)
+  const [hoje] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const semanaRef = semanaEscolhida ?? proximoQ.data?.data ?? hoje
   const [etapa, setEtapa] = useState<Etapa>({ fase: 'ocioso' })
   const [nomeArquivo, setNomeArquivo] = useState<string | null>(null)
   const [colunasFaltando, setColunasFaltando] = useState<string[]>([])
@@ -37,20 +41,7 @@ export default function ImportacaoSemanal() {
   const [observacoes, setObservacoes] = useState<string[]>([])
   const [linhasComErro, setLinhasComErro] = useState<LinhaComErro[]>([])
   const [preview, setPreview] = useState<PreviewImportacao | null>(null)
-  const [confirmando, setConfirmando] = useState(false)
   const podeImportar = pode('analista')
-
-  useEffect(() => {
-    if (semanaRefCarregada) return
-    let ativo = true
-    comiteAtaRepository.proximoComitePlanejado().then((c) => {
-      if (ativo && c) setSemanaRef(c.data)
-      if (ativo) setSemanaRefCarregada(true)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [semanaRefCarregada])
 
   function aplicarPreview(preparado: PreviewImportacao) {
     setColunasFaltando(preparado.colunasFaltando)
@@ -88,19 +79,24 @@ export default function ImportacaoSemanal() {
   async function recalcularPreview(novaSemana: string) {
     setSemanaRef(novaSemana)
     if (!preview || !novaSemana) return
-    aplicarPreview(await importacaoRepository.recalcularPreview(preview.importacaoId, novaSemana))
+    try {
+      aplicarPreview(await importacaoRepository.recalcularPreview(preview.importacaoId, novaSemana))
+    } catch (erro) {
+      setLinhasComErro([{ linha: 0, erros: [erro instanceof ErroApi ? erro.message : 'Não foi possível recalcular a prévia.'] }])
+    }
   }
 
-  async function confirmar() {
-    if (!preview) return
-    setConfirmando(true)
-    try {
-      await importacaoRepository.confirmarImportacao(preview.importacaoId, semanaRef)
+  const confirmacao = useMutation({
+    mutationFn: ({ importacaoId, semana }: { importacaoId: string; semana: string }) => importacaoRepository.confirmarImportacao(importacaoId, semana),
+    onSuccess: () => {
       setEtapa({ fase: 'concluido' })
-      recarregarDados()
-    } finally {
-      setConfirmando(false)
-    }
+      void invalidar(clienteConsultas, 'carteira', 'config', 'arquivos')
+    },
+    onError: (erro) => setLinhasComErro([{ linha: 0, erros: [erro instanceof ErroApi ? erro.message : 'Não foi possível confirmar a importação.'] }]),
+  })
+  const confirmando = confirmacao.isPending
+  function confirmar() {
+    if (preview) confirmacao.mutate({ importacaoId: preview.importacaoId, semana: semanaRef })
   }
 
   function reiniciar() {
@@ -290,12 +286,12 @@ export default function ImportacaoSemanal() {
                           <td className="px-2 py-1.5 font-medium" style={{ color: 'var(--cor-primaria)' }}>
                             {item.nome}
                             {item.novo && (
-                              <span className="ml-1.5 border-l-2 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-normal)', backgroundColor: 'var(--cor-normal-fundo)', borderColor: 'var(--cor-normal)' }}>
+                              <span className="ml-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-normal)', backgroundColor: 'var(--cor-normal-fundo)', borderColor: 'var(--cor-normal)' }}>
                                 novo
                               </span>
                             )}
                             {item.carteira && (
-                              <span className="ml-1.5 border-l-2 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', backgroundColor: 'var(--cor-fundo-recuado)', borderColor: 'var(--cor-borda-forte)' }}>
+                              <span className="ml-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', backgroundColor: 'var(--cor-fundo-recuado)', borderColor: 'var(--cor-borda-forte)' }}>
                                 {item.carteira}
                               </span>
                             )}
@@ -305,7 +301,7 @@ export default function ImportacaoSemanal() {
                               </span>
                             )}
                             {item.jaImportadoNestaSemana && (
-                              <span className="ml-1.5 border-l-2 px-1.5 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-atencao)', backgroundColor: 'var(--cor-atencao-fundo)', borderColor: 'var(--cor-atencao)' }}>
+                              <span className="ml-1.5 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ color: 'var(--cor-atencao)', backgroundColor: 'var(--cor-atencao-fundo)', borderColor: 'var(--cor-atencao)' }}>
                                 já importado nesta semana
                               </span>
                             )}

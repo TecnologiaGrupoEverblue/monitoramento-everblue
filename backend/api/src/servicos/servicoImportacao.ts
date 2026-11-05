@@ -34,6 +34,7 @@ import {
   limiaresDe,
   normalizarCnpj,
   prioridadeDoCadastro,
+  somarLinhasDoMesmoCliente,
   textoAlertas,
   type ClassificacaoSemanal,
   type EventoHistorico,
@@ -43,6 +44,7 @@ import {
   type Cliente,
   type Criticidade,
   type ItemPreviewImportacao,
+  type LinhaComErro,
   type LinhaValidada,
   type PreviewImportacao,
   type ResultadoConfirmacaoImportacao,
@@ -71,6 +73,7 @@ const CRITICIDADE_PADRAO_POR_STATUS: Record<StatusCliente, Criticidade> = {
   NORMAL: 'NORMAL',
   MONITORAMENTO: 'ATENCAO',
   SAIDA_DE_RISCO: 'CRITICA',
+  RECUPERACAO_DE_CREDITO: 'CRITICA',
   JURIDICO: 'CRITICA',
 }
 
@@ -169,6 +172,30 @@ export function separarCnpjsRepetidos(resultado: ReturnType<typeof validarLinhas
   return { ...resultado, validas, comErro }
 }
 
+/** Junta, no lugar da primeira, as linhas que apontam para o mesmo cliente já
+ * cadastrado (regra em `somarLinhasDoMesmoCliente`). Clientes novos não se
+ * juntam: CNPJ repetido já foi recusado em `separarCnpjsRepetidos`. */
+export function agruparLinhasDoMesmoCliente<T extends { linha: LinhaValidada; existente: { id: string } | null; documentosNovos: string[] }>(
+  linhas: T[],
+  documentoNovo: (documento: string) => boolean,
+): void {
+  const porCliente = new Map<string, T[]>()
+  for (const l of linhas) {
+    if (!l.existente) continue
+    const grupo = porCliente.get(l.existente.id)
+    if (grupo) grupo.push(l)
+    else porCliente.set(l.existente.id, [l])
+  }
+  for (const grupo of porCliente.values()) {
+    if (grupo.length < 2) continue
+    const somada = somarLinhasDoMesmoCliente(grupo.map((g) => g.linha))
+    const primeira = grupo[0]
+    primeira.linha = somada
+    primeira.documentosNovos = documentosDaLinha(somada).filter(documentoNovo)
+    for (const outra of grupo.slice(1)) linhas.splice(linhas.indexOf(outra), 1)
+  }
+}
+
 /** Prévias gravadas antes da 1.1 não têm a lista de documentos. */
 export function documentosDaLinha(linha: LinhaValidada): string[] {
   return linha.documentos && linha.documentos.length > 0 ? linha.documentos : [linha.cnpj]
@@ -209,14 +236,15 @@ export function construirSnapshotParcial(linha: LinhaValidada, semanaRef: string
     vencidoDesde: linha.vencidoDesde,
     // Base do comitê: o aging depende da semana escolhida (pode mudar na prévia).
     agingCarteiraDias: linha.agingDerivadoDoVencido ? agingDoVencido(linha.vencidoDesde, semanaRef) : Math.round(linha.agingCarteiraDias),
-    prazoMedioCarteiraDias: Math.round(linha.prazoMedioCarteiraDias),
+    // 1.2: duas casas (37,89 dias), coluna NUMERIC(9,2) desde a migração 0008.
+    prazoMedioCarteiraDias: linha.prazoMedioCarteiraDias === null ? null : Math.round(linha.prazoMedioCarteiraDias * 100) / 100,
     il30: percOuNulo(linha.il30),
     il60: percOuNulo(linha.il60),
     il90: percOuNulo(linha.il90),
     il120: percOuNulo(linha.il120),
     il150: percOuNulo(linha.il150),
     il180: percOuNulo(linha.il180),
-    manifestoPercSemAtuacao: limitarPerc(linha.manifestoPercSemAtuacao),
+    manifestoPercSemAtuacao: percOuNulo(linha.manifestoPercSemAtuacao),
     manifestoInacessivel: linha.manifestoInacessivel,
     manifestoNaoConfirma: linha.manifestoNaoConfirma,
     manifestoTransacaoDesconhecida: linha.manifestoTransacaoDesconhecida,
@@ -225,8 +253,8 @@ export function construirSnapshotParcial(linha: LinhaValidada, semanaRef: string
     liquidadoNoPeriodo: linha.liquidadoNoPeriodo,
     recompras: linha.recompras,
     motivoRecompra: linha.motivoRecompra || null,
-    percLiquidadoNoPrazo: limitarPerc(linha.percLiquidadoNoPrazo),
-    atrasoMedioDias: Math.round(linha.atrasoMedioDias),
+    percLiquidadoNoPrazo: percOuNulo(linha.percLiquidadoNoPrazo),
+    atrasoMedioDias: linha.atrasoMedioDias === null ? null : Math.round(linha.atrasoMedioDias * 100) / 100,
     restritivos: Math.round(linha.restritivos),
     prorrogacoesAcima60d: linha.prorrogacoesAcima60d ?? null,
     operacoesMesAnterior: linha.operacoesMesAnterior ?? null,
@@ -346,11 +374,38 @@ export class ServicoImportacao {
     return this.montarPreview(await this.carregar(importacaoId), semanaRef)
   }
 
+  /** Foto do Bitfin (1.2): as linhas já vêm validadas pela MESMA regra da
+   * planilha; daqui em diante o caminho é idêntico (prévia → confirmação). O
+   * arquivo é o JSON bruto da leitura, guardado antes de qualquer gravação. */
+  /** `substituir` (ADR-023): a posição que o cliente já tem nesta semana é
+   * trocada pela desta foto, enquanto o comitê da semana não tiver ata. */
+  async registrarFoto(p: { arquivoId: string; semanaRef: string; validas: LinhaValidada[]; comErro: LinhaComErro[]; observacoes: string[]; usuarioId: string; substituir?: boolean }): Promise<PreviewImportacao> {
+    const importacaoId = randomUUID()
+    await this.importacoes.criar({
+      id: importacaoId,
+      arquivoId: p.arquivoId,
+      semanaRef: p.semanaRef,
+      linhasValidas: p.validas,
+      linhasComErro: p.comErro,
+      colunasFaltando: [],
+      formato: 'BITFIN',
+      observacoes: p.observacoes,
+      criadoPor: p.usuarioId,
+    })
+    return this.montarPreview(await this.carregar(importacaoId), p.semanaRef, p.substituir === true)
+  }
+
   async previa(importacaoId: string, semanaRef: string): Promise<PreviewImportacao> {
     const registro = await this.carregar(importacaoId)
     if (registro.status !== 'PREVIA') throw new ErroNegocio('Esta importação já foi confirmada.', 409, 'importacao_confirmada')
     await this.importacoes.atualizarSemana(importacaoId, semanaRef)
     return this.montarPreview({ ...registro, semanaRef }, semanaRef)
+  }
+
+  private async alertasAbertos(clienteIds: string[]): Promise<Set<string>> {
+    if (clienteIds.length === 0) return new Set()
+    const { rows } = await this.banco.pool.query(`SELECT DISTINCT cliente_id, tipo FROM alerta WHERE status <> 'RESOLVIDO' AND cliente_id = ANY($1)`, [clienteIds])
+    return new Set(rows.map((r) => `${r.cliente_id}\u0000${r.tipo}`))
   }
 
   private async carregar(importacaoId: string): Promise<RegistroImportacao> {
@@ -359,7 +414,7 @@ export class ServicoImportacao {
     return registro
   }
 
-  private async montarPreview(registro: RegistroImportacao, semanaRef: string): Promise<PreviewImportacao> {
+  private async montarPreview(registro: RegistroImportacao, semanaRef: string, substituir = false): Promise<PreviewImportacao> {
     const [porDocumento, configs, planosAtrasados, lim] = await Promise.all([
       this.clientes.mapaPorDocumento(),
       this.configuracoes.listarAlertas(),
@@ -390,13 +445,21 @@ export class ServicoImportacao {
       linhas.push({ linha, existente, documentosNovos: documentos.filter((d) => !porDocumento.has(normalizarCnpj(d))) })
     }
     linhasComErro.sort((a, b) => a.linha - b.linha)
+    // Linhas com documentos diferentes que pertencem ao MESMO cliente (ex.:
+    // matriz e filial cadastradas como um cliente) viram uma posição só, a
+    // soma delas — o banco aceita uma posição por cliente e semana.
+    agruparLinhasDoMesmoCliente(linhas, (d) => !porDocumento.has(normalizarCnpj(d)))
 
     const idsExistentes = linhas.map((l) => l.existente?.id).filter((id): id is string => Boolean(id))
     const [jaNaSemana, ultimos, restritivosPorCliente] = await Promise.all([
       this.snapshots.clientesComSnapshotNaSemana(idsExistentes, semanaRef),
-      this.snapshots.ultimosPorCliente(idsExistentes),
+      // Substituindo, a comparação é com a semana ANTERIOR (a desta semana sai).
+      substituir ? this.snapshots.ultimosAntesDe(idsExistentes, semanaRef) : this.snapshots.ultimosPorCliente(idsExistentes),
       this.restritivos.atualEAnterior(idsExistentes, semanaRef),
     ])
+    // Alertas que já estão abertos não são criados de novo (a posição
+    // substituída já os gerou nesta semana).
+    const abertos = substituir ? await this.alertasAbertos(idsExistentes) : new Set<string>()
 
     const itens: ItemPreviewImportacao[] = linhas.map(({ linha, existente, documentosNovos }) => {
       const jaImportadoNestaSemana = existente ? jaNaSemana.has(existente.id) : false
@@ -404,9 +467,12 @@ export class ServicoImportacao {
       const snapshotAnterior = existente ? (ultimos.get(existente.id) ?? null) : null
       const parcial = construirSnapshotParcial(linha, semanaRef, clienteId)
       const restAnterior = existente ? (restritivosPorCliente.get(existente.id)?.anterior?.linhas ?? null) : null
-      const alertasGerados = jaImportadoNestaSemana
-        ? []
-        : avaliarAlertasSnapshot(parcial as SnapshotSemanal, snapshotAnterior, configs, { atual: linha.restritivosPorTipo ?? null, anterior: restAnterior })
+      const alertasGerados =
+        jaImportadoNestaSemana && !substituir
+          ? []
+          : avaliarAlertasSnapshot(parcial as SnapshotSemanal, snapshotAnterior, configs, { atual: linha.restritivosPorTipo ?? null, anterior: restAnterior }).filter(
+              (a) => !abertos.has(`${clienteId}\u0000${a.tipo}`),
+            )
       const riscoAnterior = snapshotAnterior?.riscoCliente ?? null
       const percVencidoAnterior = snapshotAnterior ? percVencido(snapshotAnterior.riscoCliente, snapshotAnterior.vencidoOficial) : null
       const percVencidoNovo = percVencido(linha.riscoCliente, linha.vencidoOficial)
@@ -447,7 +513,7 @@ export class ServicoImportacao {
       }
     })
 
-    const prontos = itens.filter((i) => !i.jaImportadoNestaSemana)
+    const prontos = substituir ? itens : itens.filter((i) => !i.jaImportadoNestaSemana)
     return {
       importacaoId: registro.id,
       nomeArquivo: registro.nomeArquivo,
@@ -461,6 +527,7 @@ export class ServicoImportacao {
         totalLinhasValidas: itens.length,
         linhasProntas: prontos.length,
         linhasJaImportadas: itens.length - prontos.length,
+        ...(substituir ? { posicoesSubstituidas: itens.filter((i) => i.jaImportadoNestaSemana).length } : {}),
         clientesNovos: prontos.filter((i) => i.novo).length,
         clientesAtualizados: prontos.filter((i) => !i.novo).length,
         deltaRiscoTotal: prontos.reduce((soma, i) => soma + (i.deltaRisco ?? 0), 0),
@@ -473,15 +540,16 @@ export class ServicoImportacao {
     }
   }
 
-  async confirmar(importacaoId: string, semanaRef: string, usuario: UsuarioImportacao): Promise<ResultadoConfirmacaoImportacao> {
+  async confirmar(importacaoId: string, semanaRef: string, usuario: UsuarioImportacao, opcoes: { substituir?: boolean } = {}): Promise<ResultadoConfirmacaoImportacao> {
+    const substituir = opcoes.substituir === true
     const registro = await this.carregar(importacaoId)
     if (registro.status !== 'PREVIA') throw new ErroNegocio('Esta importação já foi confirmada.', 409, 'importacao_confirmada')
     if (registro.colunasFaltando.length > 0) throw new ErroNegocio('A planilha não tem todas as colunas do modelo.', 422, 'colunas_faltando')
 
     // Prévia recalculada no momento da confirmação: a base pode ter mudado
     // desde que a tela foi aberta, e o que se grava é o que vale AGORA.
-    const preview = await this.montarPreview(registro, semanaRef)
-    const prontos = preview.itens.filter((i) => !i.jaImportadoNestaSemana)
+    const preview = await this.montarPreview(registro, semanaRef, substituir)
+    const prontos = substituir ? preview.itens : preview.itens.filter((i) => !i.jaImportadoNestaSemana)
     if (prontos.length === 0) throw new ErroNegocio('Não há linhas novas para importar nesta semana.', 422, 'nada_a_importar')
     const agora = new Date().toISOString()
     const rotuloUsuario = usuario.nome
@@ -595,6 +663,27 @@ export class ServicoImportacao {
 
       // Passo 3: snapshots (append-only), restritivos por tipo e alertas.
       const idsExistentes = prontos.filter((i) => !i.novo).map((i) => i.clienteId)
+      // Substituição (ADR-023): a posição desta semana vai para o histórico e
+      // sai, antes de gravar a nova. O banco recusa se o comitê tiver ata.
+      let posicoesSubstituidas = 0
+      const aSubstituir = substituir ? prontos.filter((i) => i.jaImportadoNestaSemana).map((i) => i.clienteId) : []
+      if (aSubstituir.length > 0) {
+        const comAta = await tx.query(`SELECT 1 FROM comite WHERE data = $1 AND status = 'REALIZADO' LIMIT 1`, [semanaRef])
+        if (comAta.rowCount) throw new ErroNegocio('O comitê desta semana já tem ata: a posição não pode mais ser substituída.', 409, 'posicao_com_ata')
+        await tx.query(`SET LOCAL monitoramento.substituicao_posicao = 'on'`)
+        await tx.query(
+          `INSERT INTO snapshot_semanal_substituido SELECT s.*, now(), $3 FROM snapshot_semanal s WHERE s.semana_ref = $1 AND s.cliente_id = ANY($2)`,
+          [semanaRef, aSubstituir, importacaoId],
+        )
+        await tx.query(
+          `INSERT INTO classificacao_semanal_substituida SELECT c.*, now(), $3 FROM classificacao_semanal c WHERE c.semana_ref = $1 AND c.cliente_id = ANY($2)`,
+          [semanaRef, aSubstituir, importacaoId],
+        )
+        await tx.query(`DELETE FROM classificacao_semanal WHERE semana_ref = $1 AND cliente_id = ANY($2)`, [semanaRef, aSubstituir])
+        const r = await tx.query(`DELETE FROM snapshot_semanal WHERE semana_ref = $1 AND cliente_id = ANY($2)`, [semanaRef, aSubstituir])
+        await tx.query(`SET LOCAL monitoramento.substituicao_posicao = 'off'`)
+        posicoesSubstituidas = r.rowCount ?? 0
+      }
       const [anterioresSnap, restritivosAntes, apartadas, carteiras] = await Promise.all([
         this.snapshots.ultimosPorCliente(idsExistentes, tx),
         this.restritivos.atualEAnterior(idsExistentes, semanaRef, tx),
@@ -673,11 +762,25 @@ export class ServicoImportacao {
           atorEmail: usuario.email,
           recursoTipo: 'importacao',
           recursoId: importacaoId,
-          detalhes: { semanaRef, snapshots: snapshots.length, clientesCriados, alertas: alertas.length, classificados: classificacoes.length },
+          detalhes: { semanaRef, snapshots: snapshots.length, clientesCriados, alertas: alertas.length, classificados: classificacoes.length, posicoesSubstituidas },
         },
         tx,
       )
-      return { importacaoId, semanaRef, snapshotsGravados: snapshots.length, clientesCriados, alertasGerados: alertas.length }
+      return { importacaoId, semanaRef, snapshotsGravados: snapshots.length, clientesCriados, alertasGerados: alertas.length, posicoesSubstituidas }
+    }).catch((erro: unknown) => {
+      // Defesa final: a trava do banco (uma posição por cliente e semana) não
+      // pode chegar ao usuário como "erro inesperado". Nada foi gravado.
+      const e = erro as { code?: string; constraint?: string; detail?: string }
+      if (e?.code === '23505' && e.constraint === 'snapshot_um_por_semana') {
+        const id = /\(cliente_id, semana_ref\)=\(([^,]+),/.exec(e.detail ?? '')?.[1]
+        const nome = preview.itens.find((i) => i.clienteId === id)?.nome
+        throw new ErroNegocio(
+          `${nome ? `O cliente ${nome}` : 'Um dos clientes'} já tem posição gravada nesta semana. Nada foi importado; atualize a prévia e confira as linhas desse cliente.`,
+          409,
+          'posicao_duplicada_na_semana',
+        )
+      }
+      throw erro
     })
     return resultado
   }

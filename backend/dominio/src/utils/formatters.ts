@@ -35,6 +35,11 @@ export function formatarPercentual(valor: number, casasDecimais = 1): string {
 }
 
 /** Percentual que pode faltar (ex.: janela de liquidez sem base). */
+/** Dias com até 2 casas no padrão brasileiro: 37,89 dias · 38 dias. */
+export function formatarDias(valor: number): string {
+  return `${valor.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} dias`
+}
+
 export function formatarPercentualOpcional(valor: number | null | undefined, casasDecimais = 1, ausente = 'Sem base'): string {
   return valor === null || valor === undefined ? ausente : formatarPercentual(valor, casasDecimais)
 }
@@ -74,6 +79,7 @@ export const STATUS_LABEL: Record<string, string> = {
   NORMAL: 'Normal',
   MONITORAMENTO: 'Monitoramento',
   SAIDA_DE_RISCO: 'Saída de Risco',
+  RECUPERACAO_DE_CREDITO: 'Recuperação de Crédito',
   JURIDICO: 'Jurídico',
 }
 

@@ -385,7 +385,7 @@ export function gerarDadosFicticios(): DadosFicticios {
   let movimentosConta: MovimentoContaMensal[] = []
   for (const cliente of clientes) {
     const serieCliente = snapshotsPorCliente.get(cliente.id)!
-    const mediaLiquidadoNoPeriodo = serieCliente.reduce((soma, s) => soma + s.liquidadoNoPeriodo, 0) / serieCliente.length
+    const mediaLiquidadoNoPeriodo = serieCliente.reduce((soma, s) => soma + (s.liquidadoNoPeriodo ?? 0), 0) / serieCliente.length
     movimentosConta = movimentosConta.concat(gerarMovimentoContaCliente(rng, cliente.id, cliente.status, mediaLiquidadoNoPeriodo, hoje))
   }
 

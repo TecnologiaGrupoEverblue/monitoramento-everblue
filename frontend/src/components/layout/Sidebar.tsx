@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
-  BarChart3,
+  Camera,
   ClipboardList,
   DoorOpen,
   FileSignature,
@@ -12,8 +12,8 @@ import {
   Menu,
   Scale,
   Settings,
+  ShieldCheck,
   ShieldAlert,
-  Upload,
   Users,
   X,
   type LucideIcon,
@@ -21,7 +21,9 @@ import {
 import { useSessao } from '../../contexts/SessaoContext'
 import { sessaoRepository } from '../../repositories'
 
-const ITENS_MENU: { rota: string; label: string; icone: LucideIcon }[] = [
+/** `gestao`: só Administrador, Diretoria e Gerente (perfil da Intranet). O
+ * servidor bloqueia também; aqui só some do menu. */
+const ITENS_MENU: { rota: string; label: string; icone: LucideIcon; gestao?: boolean }[] = [
   { rota: '/', label: 'Dashboard Executivo', icone: LayoutDashboard },
   { rota: '/monitoramento', label: 'Clientes em Monitoramento', icone: ShieldAlert },
   { rota: '/saida-de-risco', label: 'Saída de Risco', icone: DoorOpen },
@@ -30,9 +32,10 @@ const ITENS_MENU: { rota: string; label: string; icone: LucideIcon }[] = [
   { rota: '/gerentes-plataformas', label: 'Gerentes e Plataformas', icone: Users },
   { rota: '/comites', label: 'Comitês e Atas', icone: FileSignature },
   { rota: '/historico', label: 'Histórico', icone: History },
-  { rota: '/importacao', label: 'Importação Semanal', icone: Upload },
+  { rota: '/foto-bitfin', label: 'Foto do Bitfin', icone: Camera, gestao: true },
+  { rota: '/mapa-garantias', label: 'Mapa de Garantias', icone: ShieldCheck, gestao: true },
   { rota: '/arquivos', label: 'Central de Arquivos', icone: FolderOpen },
-  { rota: '/cadastros', label: 'Cadastros e Configurações', icone: Settings },
+  { rota: '/cadastros', label: 'Parâmetros', icone: Settings, gestao: true },
 ]
 
 function Avatar({ nome, temFoto }: { nome: string; temFoto: boolean }) {
@@ -54,9 +57,22 @@ function Avatar({ nome, temFoto }: { nome: string; temFoto: boolean }) {
   )
 }
 
+function secaoDe(caminho: string): string | null {
+  if (caminho === '/') return '/'
+  const item = ITENS_MENU.find((i) => i.rota !== '/' && (caminho === i.rota || caminho.startsWith(`${i.rota}/`)))
+  if (item) return item.rota
+  return caminho === '/importacao' ? '/foto-bitfin' : null
+}
+
 export default function Sidebar({ aberto, aoFechar, aoAlternar }: { aberto: boolean; aoFechar: () => void; aoAlternar: () => void }) {
   const { usuario, sair } = useSessao()
   const local = useLocation()
+  // Seção marcada no menu: a da rota atual; em páginas de detalhe (ficha do
+  // cliente) continua marcada a seção de onde a pessoa veio.
+  const secaoDaRota = secaoDe(local.pathname)
+  const [secaoAnterior, setSecaoAnterior] = useState('/')
+  if (secaoDaRota && secaoDaRota !== secaoAnterior) setSecaoAnterior(secaoDaRota)
+  const secaoAtual = secaoDaRota ?? secaoAnterior
 
   useEffect(() => {
     aoFechar()
@@ -94,9 +110,6 @@ export default function Sidebar({ aberto, aoFechar, aoAlternar }: { aberto: bool
           <NavLink to="/" className="flex items-center gap-2">
             <img src="/marca/everblue-logo-v2.png" alt="Everblue Grupo" className="h-10 w-[160px] object-contain object-left" />
           </NavLink>
-          <p className="mt-2 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-white/50">
-            <BarChart3 className="h-3.5 w-3.5 text-[#DFBF7D]" /> Monitoramento do FIDC
-          </p>
         </div>
 
         <div className="mx-3 mt-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
@@ -114,25 +127,25 @@ export default function Sidebar({ aberto, aoFechar, aoAlternar }: { aberto: bool
         </div>
 
         <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 py-4" aria-label="Menu principal">
-          {ITENS_MENU.map((item, indice) => {
+          {ITENS_MENU.filter((item) => !item.gestao || usuario.acessoGestao).map((item, indice) => {
             const Icone = item.icone
             const inicio = indice === 0
+            const ativo = item.rota === secaoAtual
             return (
               <NavLink
                 key={item.rota}
                 to={item.rota}
                 end={item.rota === '/'}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm font-medium transition-all duration-200 ${inicio ? 'mb-2' : ''} ${
-                    isActive
-                      ? 'border-white/10 bg-white/10 text-white shadow-sm'
-                      : inicio
-                        ? 'border-[#DFBF7D]/20 bg-white/[0.06] text-white/85 hover:border-[#DFBF7D]/35 hover:bg-white/10'
-                        : 'border-transparent text-white/60 hover:bg-white/5 hover:text-white'
-                  }`
-                }
+                data-ativo={ativo || undefined}
+                className={`relative flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm font-medium transition-all duration-200 ${inicio ? 'mb-2' : ''} ${
+                  ativo
+                    ? 'border-[#DFBF7D]/45 bg-white/[0.12] text-white shadow-sm'
+                    : inicio
+                      ? 'border-white/10 bg-white/[0.04] text-white/75 hover:border-[#DFBF7D]/35 hover:bg-white/10 hover:text-white'
+                      : 'border-transparent text-white/60 hover:bg-white/5 hover:text-white'
+                }`}
               >
-                <Icone className="h-5 w-5 flex-shrink-0" />
+                <Icone className="h-5 w-5 flex-shrink-0" style={ativo ? { color: '#DFBF7D' } : undefined} />
                 <span className="leading-tight">{item.label}</span>
               </NavLink>
             )

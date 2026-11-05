@@ -1,19 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { esquemaItemChecklist } from '@monitoramento/dominio'
+import { ErroApi } from '../api/cliente'
+import { consultas } from '../consultas'
+import { ErroCarga } from './ui/EstadoCarga'
 import type { ChaveItemChecklist, Gravidade } from '../models/types'
 import { checklistRepository, GRUPOS_CHECKLIST, ITENS_CHECKLIST, type ItemChecklistView } from '../repositories'
 import type { DadoVisualChecklist, StatusJuridicoResumo } from '../regras/motorChecklist'
 import { gravidadeCor } from '../theme/colors'
 import { useSessao } from '../contexts/SessaoContext'
-import { formatarPercentual } from '../utils/formatters'
+import { formatarMoeda, formatarPercentual } from '../utils/formatters'
 import { StatusPlanoBadge } from './ui/Badges'
 import DetalheItemChecklist from './DetalheItemChecklist'
+import { GradeEquilibrada } from './ui/GradeEquilibrada'
 
 const OPCOES_GRAVIDADE: Gravidade[] = ['VERDE', 'AMARELO', 'VERMELHO']
+type AlteracaoItem = { parecer?: string; gravidade?: Gravidade; gravidadeManual?: boolean }
 const LABEL_POR_CHAVE = new Map(ITENS_CHECKLIST.map((i) => [i.chave, i.label]))
 
 function SeletorGravidade({ gravidade, onChange }: { gravidade: Gravidade; onChange: (g: Gravidade) => void }) {
   return (
-    <div className="flex shrink-0 gap-1">
+    <div className="-my-1 -mr-1 flex shrink-0">
       {OPCOES_GRAVIDADE.map((g) => {
         const cor = gravidadeCor[g]
         const ativo = g === gravidade
@@ -22,10 +29,13 @@ function SeletorGravidade({ gravidade, onChange }: { gravidade: Gravidade; onCha
             key={g}
             type="button"
             title={g === 'VERDE' ? 'Marcar como normal' : g === 'AMARELO' ? 'Marcar como atenção' : 'Marcar como crítico'}
+            aria-pressed={ativo}
+            aria-label={g === 'VERDE' ? 'Normal' : g === 'AMARELO' ? 'Atenção' : 'Crítico'}
             onClick={() => onChange(g)}
-            className="h-2.5 w-2.5 rounded-full border"
-            style={{ backgroundColor: ativo ? cor.texto : 'transparent', borderColor: cor.texto, opacity: ativo ? 1 : 0.5 }}
-          />
+            className="flex h-6 w-6 items-center justify-center rounded-full"
+          >
+            <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: ativo ? cor.texto : 'transparent', borderColor: cor.texto, opacity: ativo ? 1 : 0.55 }} />
+          </button>
         )
       })}
     </div>
@@ -94,7 +104,7 @@ function StatusJuridicoBadge({ status }: { status: StatusJuridicoResumo }) {
   }
   const cfg = mapa[status]
   return (
-    <span className="inline-flex items-center rounded-full border-l-2 px-2 py-0.5 text-[11px] font-medium" style={{ color: cfg.cor, backgroundColor: cfg.fundo, borderColor: cfg.cor }}>
+    <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold" style={{ color: cfg.cor, backgroundColor: cfg.fundo }}>
       {cfg.label}
     </span>
   )
@@ -139,7 +149,7 @@ function Widget({ dado }: { dado: DadoVisualChecklist }) {
           {dado.itens.map((it) => {
             const cor = it.cor ? gravidadeCor[it.cor] : { texto: 'var(--cor-texto-primario)', fundo: 'rgba(255,255,255,0.6)' }
             return (
-              <span key={it.label} className="rounded-full border-l-2 px-2 py-0.5 text-[10.5px] font-medium" style={{ color: cor.texto, backgroundColor: cor.fundo, borderColor: cor.texto }}>
+              <span key={it.label} className="rounded-full px-2.5 py-0.5 text-[10.5px] font-semibold" style={{ color: cor.texto, backgroundColor: cor.fundo }}>
                 {it.label}
                 {it.exibicao ? ` · ${it.exibicao}` : ''}
               </span>
@@ -147,9 +157,60 @@ function Widget({ dado }: { dado: DadoVisualChecklist }) {
           })}
         </div>
       )
+    case 'manifesto':
+      return <ManifestoCard dado={dado} />
     default:
       return null
   }
+}
+
+/** Manifesto no card: a soma dos 4 tipos e, ao abrir, cada um com valor, % do
+ * risco e o que significa. Clique e teclado aqui não abrem o detalhe do item. */
+function ManifestoCard({ dado }: { dado: Extract<DadoVisualChecklist, { tipo: 'manifesto' }> }) {
+  const [aberto, setAberto] = useState(false)
+  const cor = dado.total > 0 ? gravidadeCor.VERMELHO.texto : gravidadeCor.VERDE.texto
+  const parar = (e: React.SyntheticEvent) => e.stopPropagation()
+  return (
+    <div className="flex flex-col gap-1" onClick={parar} onKeyDown={parar}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[11px]" style={{ color: 'var(--cor-texto-secundario)' }}>
+          Desconhecida + Lastro + Não concluída + Protestado
+        </span>
+        <span className="numeros-tabulares shrink-0 text-[13px] font-bold" style={{ color: cor }}>
+          {formatarMoeda(dado.total)}
+          {dado.perc !== null && <span className="ml-1 text-[11px] font-semibold">({formatarPercentual(dado.perc)})</span>}
+        </span>
+      </div>
+      <button
+        type="button"
+        className="self-start text-[11px] font-medium underline"
+        style={{ color: 'var(--cor-destaque)' }}
+        aria-expanded={aberto}
+        onClick={() => setAberto((a) => !a)}
+      >
+        {aberto ? 'Ocultar os 4 tipos' : 'Ver os 4 tipos'}
+      </button>
+      {aberto && (
+        <ul className="flex flex-col gap-1">
+          {dado.tipos.map((t) => (
+            <li key={t.chave} className="border-l-2 pl-1.5" style={{ borderColor: t.valor > 0 ? gravidadeCor.VERMELHO.texto : 'var(--cor-borda)' }}>
+              <div className="flex items-baseline justify-between gap-2 text-[11.5px]">
+                <span className="font-semibold" style={{ color: t.valor > 0 ? gravidadeCor.VERMELHO.texto : 'var(--cor-texto-secundario)' }}>
+                  {t.label}
+                </span>
+                <span className="numeros-tabulares shrink-0">
+                  {t.valor > 0 ? `${formatarMoeda(t.valor)} · ${t.perc !== null ? formatarPercentual(t.perc) : '—'}` : '—'}
+                </span>
+              </div>
+              <p className="text-[10.5px] leading-snug" style={{ color: 'var(--cor-texto-secundario)' }}>
+                {t.descricao}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 /** Checklist de Análise Semanal — os 17 pontos do roteiro oficial do
@@ -168,22 +229,11 @@ export default function ChecklistAnalise({
   usuario: string
   compacto?: boolean
 }) {
-  const [itens, setItens] = useState<ItemChecklistView[] | null>(null)
+  const clienteConsultas = useQueryClient()
+  const chave = consultas.checklist(clienteId, semanaRef ?? '')
+  const q = useQuery({ ...chave, enabled: Boolean(semanaRef) })
+  const itens = q.data ?? null
   const [detalheAberto, setDetalheAberto] = useState<ChaveItemChecklist | null>(null)
-
-  useEffect(() => {
-    if (!semanaRef) {
-      setItens([])
-      return
-    }
-    let ativo = true
-    checklistRepository.obterChecklist(clienteId, semanaRef).then((lista) => {
-      if (ativo) setItens(lista)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [clienteId, semanaRef])
 
   const contagem = useMemo(
     () => ({
@@ -195,19 +245,35 @@ export default function ChecklistAnalise({
   )
 
   const { pode } = useSessao()
-  async function salvar(item: ChaveItemChecklist, alteracoes: { parecer?: string; gravidade?: Gravidade; gravidadeManual?: boolean }) {
+  // Grava um item (parecer ou gravidade) validado pelo esquema da API e
+  // atualiza o cache sem buscar o checklist inteiro de novo.
+  const gravar = useMutation({
+    mutationFn: ({ item, alteracoes }: { item: ChaveItemChecklist; alteracoes: AlteracaoItem }) =>
+      checklistRepository.salvarItem(clienteId, semanaRef!, item, { ...esquemaItemChecklist.parse(alteracoes), atualizadoPor: usuario }),
+    onSuccess: (_r, { item, alteracoes }) => {
+      clienteConsultas.setQueryData(chave.queryKey, (atual) => atual?.map((i) => (i.item === item ? { ...i, ...alteracoes, persistido: true } : i)))
+      void clienteConsultas.invalidateQueries({ queryKey: ['checklist', 'resumo'] })
+    },
+  })
+  function salvar(item: ChaveItemChecklist, alteracoes: AlteracaoItem) {
     if (!semanaRef || !pode('analista')) return
-    await checklistRepository.salvarItem(clienteId, semanaRef, item, { ...alteracoes, atualizadoPor: usuario })
-    setItens((atual) => (atual ? atual.map((i) => (i.item === item ? { ...i, ...alteracoes, persistido: true } : i)) : atual))
+    gravar.mutate({ item, alteracoes })
   }
 
-  if (!semanaRef) return <p className="text-xs text-gray-400">Selecione uma posição de carteira para ver o checklist.</p>
-  if (!itens || itens.length === 0) return <p className="text-xs text-gray-400">Carregando checklist…</p>
+  if (q.isError) return <ErroCarga titulo="Não foi possível carregar o checklist." erro={q.error} aoTentarDeNovo={() => void q.refetch()} />
+  if (!semanaRef) return <p className="text-xs text-[color:var(--cor-texto-secundario)]">Selecione uma posição de carteira para ver o checklist.</p>
+  if (!itens) return <p className="text-xs text-[color:var(--cor-texto-secundario)]" role="status">Carregando checklist…</p>
+  if (itens.length === 0) return <p className="text-xs text-[color:var(--cor-texto-secundario)]">Checklist sem itens para esta posição.</p>
 
   const porChave = new Map(itens.map((it) => [it.item, it]))
 
   return (
     <div className="flex flex-col gap-3">
+      {gravar.isError && (
+        <p role="alert" className="border-l-2 p-2 text-xs" style={{ borderColor: 'var(--cor-critico)', backgroundColor: 'var(--cor-critico-fundo)', color: 'var(--cor-critico)' }}>
+          {gravar.error instanceof ErroApi ? gravar.error.message : 'Não foi possível gravar o item do checklist.'}
+        </p>
+      )}
       <div className="flex gap-px" style={{ backgroundColor: 'var(--cor-borda)' }}>
         <Estatistica titulo="crítico(s)" valor={contagem.vermelho} cor={gravidadeCor.VERMELHO.texto} fundo={gravidadeCor.VERMELHO.fundo} />
         <Estatistica titulo="atenção" valor={contagem.amarelo} cor={gravidadeCor.AMARELO.texto} fundo={gravidadeCor.AMARELO.fundo} />
@@ -220,7 +286,7 @@ export default function ChecklistAnalise({
             <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: 'var(--cor-texto-secundario)' }}>
               {grupo.titulo}
             </p>
-            <div className={`grid grid-cols-1 gap-1.5 sm:grid-cols-2 ${compacto ? 'lg:grid-cols-2' : 'lg:grid-cols-4'}`}>
+            <GradeEquilibrada larguraMinima={compacto ? 300 : 250}>
               {grupo.itens.map((chave) => {
                 const it = porChave.get(chave)
                 if (!it) return null
@@ -235,7 +301,7 @@ export default function ChecklistAnalise({
                   />
                 )
               })}
-            </div>
+            </GradeEquilibrada>
           </div>
         ))}
       </div>
@@ -243,10 +309,12 @@ export default function ChecklistAnalise({
       {detalheAberto && (
         <DetalheItemChecklist
           clienteId={clienteId}
+          semanaRef={semanaRef}
           item={detalheAberto}
           label={LABEL_POR_CHAVE.get(detalheAberto) ?? detalheAberto}
           resumo={porChave.get(detalheAberto)?.resumo ?? ''}
           gravidade={porChave.get(detalheAberto)?.gravidade ?? 'VERDE'}
+          dado={porChave.get(detalheAberto)?.dado}
           aoFechar={() => setDetalheAberto(null)}
         />
       )}
@@ -274,9 +342,17 @@ function Bloco({
       role="button"
       tabIndex={0}
       onClick={onAbrirDetalhe}
-      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onAbrirDetalhe()}
-      title="Clique para ver o detalhe completo"
-      className="flex cursor-pointer flex-col gap-1 p-2 transition-shadow hover:shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)]"
+      onKeyDown={(e) => {
+        // Só o próprio bloco abre o detalhe: Enter/espaço digitados no parecer
+        // ou nas bolinhas de gravidade são do campo, não do bloco.
+        if (e.target !== e.currentTarget) return
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onAbrirDetalhe()
+        }
+      }}
+      aria-label={`${label}: abrir o detalhe`}
+      className="flex h-full w-full min-w-0 cursor-pointer flex-col gap-1 p-2 transition-shadow hover:shadow-[inset_0_0_0_1px_rgba(0,0,0,0.15)]"
       style={{ backgroundColor: cor.fundo }}
     >
       <div className="flex items-center justify-between gap-2">
@@ -288,24 +364,29 @@ function Bloco({
         </div>
       </div>
       {item.dado && <Widget dado={item.dado} />}
-      <p className="text-[11.5px] leading-snug" style={{ color: 'var(--cor-texto-primario)' }}>
-        {item.resumo}
-      </p>
-      <textarea
-        readOnly={!podeEditar}
-        defaultValue={item.parecer}
-        onBlur={(e) => onSalvar({ parecer: e.target.value })}
-        onClick={(e) => e.stopPropagation()}
-        placeholder="Parecer do executivo…"
-        rows={compacto ? 1 : 2}
-        className="mt-0.5 w-full border-0 bg-[var(--cor-superficie-solida)]/70 px-1.5 py-1 text-[12px]"
-        style={{ outlineColor: cor.texto }}
-      />
-      {item.atualizadoEm && (
-        <p className="text-[10px] opacity-70" style={{ color: cor.texto }}>
-          {item.atualizadoPor} {item.gravidadeManual && '· ajustado manualmente'}
+      {/* O card do manifesto já mostra o total: o resumo só aparece quando não há problema. */}
+      {!(item.dado?.tipo === 'manifesto' && item.dado.total > 0) && (
+        <p className="text-[11.5px] leading-snug" style={{ color: 'var(--cor-texto-primario)' }}>
+          {item.resumo}
         </p>
       )}
+      {/* Parecer sempre no rodapé do card: na mesma linha da grade, todos alinhados. */}
+      <div className="mt-auto flex flex-col gap-0.5 pt-1">
+        <textarea
+          readOnly={!podeEditar}
+          defaultValue={item.parecer}
+          onBlur={(e) => onSalvar({ parecer: e.target.value })}
+          onClick={(e) => e.stopPropagation()}
+          placeholder="Parecer do executivo…"
+          aria-label={`Parecer: ${label}`}
+          rows={compacto ? 2 : 3}
+          className="w-full resize-y border-0 bg-[var(--cor-superficie-solida)]/70 px-1.5 py-1 text-[12px]"
+          style={{ outlineColor: cor.texto }}
+        />
+        <p className="min-h-[14px] text-[10px] opacity-70" style={{ color: cor.texto }}>
+          {item.atualizadoEm ? `${item.atualizadoPor ?? ''}${item.gravidadeManual ? ' · ajustado manualmente' : ''}` : ''}
+        </p>
+      </div>
     </div>
   )
 }

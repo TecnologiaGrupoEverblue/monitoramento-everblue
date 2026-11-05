@@ -9,7 +9,7 @@
  * Upload e download são em FLUXO: o arquivo nunca é carregado inteiro na
  * memória da API, qualquer que seja o tamanho.
  */
-import { FINALIDADES_ARQUIVO, SITUACOES_ARQUIVO } from '@monitoramento/dominio'
+import { FINALIDADES_ARQUIVO, SITUACOES_ARQUIVO, esquemaCategoriaArquivo, esquemaEtiquetasArquivo, esquemaMotivoArquivo, esquemaTextoArquivo } from '@monitoramento/dominio'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import type { Dependencias } from '../../composicao'
@@ -19,12 +19,11 @@ import { filtrosDe } from './negocio'
 
 const uuid = z.string().uuid('identificador de arquivo inválido')
 const data = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'data no formato yyyy-MM-dd')
-const categoria = z.string().trim().min(1, 'categoria obrigatória').max(80)
-const textoLivre = z.string().trim().max(2000)
+const categoria = esquemaCategoriaArquivo
+const textoLivre = esquemaTextoArquivo
 const recursoTipo = z.string().trim().regex(/^[a-z][a-z0-9_-]{0,39}$/, 'tipo de vínculo inválido')
 const recursoId = z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9_-]+$/, 'vínculo inválido')
-const tags = z.record(z.string().trim().min(1).max(60), z.string().trim().max(500)).refine((t) => Object.keys(t).length <= 30, 'no máximo 30 etiquetas')
-const motivo = z.string().trim().min(5, 'informe o motivo (mínimo 5 caracteres)').max(500)
+const tags = esquemaEtiquetasArquivo
 
 /** Tipos seguros para abrir no próprio navegador; o resto sai sempre como anexo. */
 const VISUALIZAVEIS = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp'])
@@ -158,11 +157,11 @@ export async function rotasArquivos(app: FastifyInstance, deps: Dependencias): P
   app.post('/api/v1/arquivos/:arquivoId/reativar', analista, (request) => servico.reativar(z.object({ arquivoId: uuid }).parse(request.params).arquivoId, ator(request)))
   app.post('/api/v1/arquivos/:arquivoId/excluir', analista, (request) => {
     const { arquivoId } = z.object({ arquivoId: uuid }).parse(request.params)
-    return servico.excluir(arquivoId, z.object({ motivo }).parse(request.body ?? {}).motivo, ator(request))
+    return servico.excluir(arquivoId, esquemaMotivoArquivo.parse(request.body ?? {}).motivo, ator(request))
   })
   app.post('/api/v1/arquivos/:arquivoId/expurgar', admin, (request) => {
     const { arquivoId } = z.object({ arquivoId: uuid }).parse(request.params)
-    return servico.expurgar(arquivoId, z.object({ motivo }).parse(request.body ?? {}).motivo, ator(request))
+    return servico.expurgar(arquivoId, esquemaMotivoArquivo.parse(request.body ?? {}).motivo, ator(request))
   })
 
   // ------------------------------------------------------------ exportações

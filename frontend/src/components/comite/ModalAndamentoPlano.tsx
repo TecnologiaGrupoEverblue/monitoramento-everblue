@@ -1,5 +1,10 @@
-import { useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { z } from 'zod'
+import { esquemaAndamentoPlano } from '@monitoramento/dominio'
 import { ErroApi } from '../../api/cliente'
+import { invalidar } from '../../consultas'
 import type { PlanoAcao } from '../../models/types'
 import { planoAcaoRepository } from '../../repositories'
 import { formatarData } from '../../utils/formatters'
@@ -9,34 +14,39 @@ import { Modal } from '../ui/Modal'
 /** Andamento do plano: o que foi feito, o que não foi feito, prazo,
  * responsável, conclusão ou reabertura. Cada gravação vira evento no
  * histórico do cliente. */
-export default function ModalAndamentoPlano({ plano, nomeCliente, aoFechar }: { plano: PlanoAcao; nomeCliente?: string; aoFechar: (atualizado: PlanoAcao | null) => void }) {
-  const [feito, setFeito] = useState(plano.oQueFoiFeito ?? '')
-  const [naoFeito, setNaoFeito] = useState(plano.oQueNaoFoiFeito ?? '')
-  const [dataLimite, setDataLimite] = useState(plano.dataLimite)
-  const [responsavel, setResponsavel] = useState(plano.responsavel)
-  const [justificativa, setJustificativa] = useState('')
-  const [salvando, setSalvando] = useState(false)
-  const [erro, setErro] = useState<string | null>(null)
-  const concluido = plano.status === 'CONCLUIDO'
+/** Campos do formulário: o mesmo esquema que a API aplica (dominio/esquemas). */
+const esquemaFormulario = esquemaAndamentoPlano.pick({ oQueFoiFeito: true, oQueNaoFoiFeito: true, justificativa: true }).extend({
+  dataLimite: esquemaAndamentoPlano.shape.dataLimite.unwrap(),
+  responsavel: esquemaAndamentoPlano.shape.responsavel.unwrap(),
+})
+type Formulario = z.input<typeof esquemaFormulario>
 
-  async function salvar(acao: 'salvar' | 'concluir' | 'reabrir') {
-    setSalvando(true)
-    setErro(null)
-    try {
-      const atualizado = await planoAcaoRepository.registrarAndamento(plano.id, {
-        oQueFoiFeito: feito,
-        oQueNaoFoiFeito: naoFeito,
-        responsavel,
-        dataLimite,
-        justificativa: justificativa || undefined,
+export default function ModalAndamentoPlano({ plano, nomeCliente, aoFechar }: { plano: PlanoAcao; nomeCliente?: string; aoFechar: (atualizado: PlanoAcao | null) => void }) {
+  const concluido = plano.status === 'CONCLUIDO'
+  const clienteConsultas = useQueryClient()
+  const { register, handleSubmit, formState } = useForm<Formulario>({
+    resolver: zodResolver(esquemaFormulario),
+    defaultValues: { oQueFoiFeito: plano.oQueFoiFeito ?? '', oQueNaoFoiFeito: plano.oQueNaoFoiFeito ?? '', dataLimite: plano.dataLimite, responsavel: plano.responsavel, justificativa: '' },
+  })
+  const gravar = useMutation({
+    mutationFn: ({ dados, acao }: { dados: Formulario; acao: 'salvar' | 'concluir' | 'reabrir' }) =>
+      planoAcaoRepository.registrarAndamento(plano.id, {
+        oQueFoiFeito: dados.oQueFoiFeito ?? '',
+        oQueNaoFoiFeito: dados.oQueNaoFoiFeito ?? '',
+        responsavel: dados.responsavel,
+        dataLimite: dados.dataLimite,
+        justificativa: dados.justificativa || undefined,
         ...(acao === 'concluir' ? { concluir: true } : acao === 'reabrir' ? { reabrir: true } : {}),
-      })
+      }),
+    onSuccess: (atualizado) => {
+      void invalidar(clienteConsultas, 'carteira')
       aoFechar(atualizado)
-    } catch (e) {
-      setErro(e instanceof ErroApi ? e.message : 'Não foi possível salvar o andamento.')
-      setSalvando(false)
-    }
-  }
+    },
+  })
+  const salvando = gravar.isPending
+  const erro = gravar.error ? (gravar.error instanceof ErroApi ? gravar.error.message : 'Não foi possível salvar o andamento.') : null
+  const salvar = (acao: 'salvar' | 'concluir' | 'reabrir') => void handleSubmit((dados) => gravar.mutate({ dados, acao }))()
+  const erroCampo = (nome: keyof Formulario) => formState.errors[nome]?.message
 
   return (
     <Modal
@@ -88,33 +98,35 @@ export default function ModalAndamentoPlano({ plano, nomeCliente, aoFechar }: { 
           <span className="text-xs font-medium" style={{ color: 'var(--cor-texto-secundario)' }}>
             O que foi feito
           </span>
-          <textarea rows={3} value={feito} onChange={(e) => setFeito(e.target.value)} maxLength={4000} />
+          <textarea rows={3} {...register('oQueFoiFeito')} maxLength={4000} />
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium" style={{ color: 'var(--cor-texto-secundario)' }}>
             O que não foi feito
           </span>
-          <textarea rows={3} value={naoFeito} onChange={(e) => setNaoFeito(e.target.value)} maxLength={4000} />
+          <textarea rows={3} {...register('oQueNaoFoiFeito')} maxLength={4000} />
         </label>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1">
             <span className="text-xs font-medium" style={{ color: 'var(--cor-texto-secundario)' }}>
               Prazo (data-limite)
             </span>
-            <input type="date" className="campo" value={dataLimite} onChange={(e) => setDataLimite(e.target.value)} disabled={concluido} />
+            <input type="date" className="campo" {...register('dataLimite')} disabled={concluido} aria-invalid={Boolean(erroCampo('dataLimite'))} />
+            {erroCampo('dataLimite') && <span className="text-xs" style={{ color: 'var(--cor-critico)' }}>{erroCampo('dataLimite')}</span>}
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-xs font-medium" style={{ color: 'var(--cor-texto-secundario)' }}>
               Responsável por fazer acontecer
             </span>
-            <input className="campo" value={responsavel} onChange={(e) => setResponsavel(e.target.value)} maxLength={200} />
+            <input className="campo" {...register('responsavel')} maxLength={200} aria-invalid={Boolean(erroCampo('responsavel'))} />
+            {erroCampo('responsavel') && <span className="text-xs" style={{ color: 'var(--cor-critico)' }}>{erroCampo('responsavel')}</span>}
           </label>
         </div>
         <label className="flex flex-col gap-1">
           <span className="text-xs font-medium" style={{ color: 'var(--cor-texto-secundario)' }}>
             Observação para o histórico (opcional)
           </span>
-          <input className="campo" value={justificativa} onChange={(e) => setJustificativa(e.target.value)} maxLength={1000} placeholder="Ex.: prazo repactuado no comitê de 25/09" />
+          <input className="campo" {...register('justificativa')} maxLength={1000} placeholder="Ex.: prazo repactuado no comitê de 25/09" />
         </label>
         <p className="text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
           Prazo vencido sem conclusão marca o plano como <strong>atrasado</strong> automaticamente e o coloca na pauta do próximo comitê.

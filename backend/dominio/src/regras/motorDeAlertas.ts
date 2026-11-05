@@ -5,7 +5,7 @@ import { compararRestritivos, descreverVariacao, type LinhaRestritivo } from './
 /**
  * Motor de alertas — as regras comparam o snapshot atual com o anterior e
  * decidem se um alerta deve ser disparado. Os LIMIARES vêm sempre de
- * `ConfiguracaoAlerta` (tela Cadastros e Configurações), nunca fixos aqui.
+ * `ConfiguracaoAlerta` (tela Parâmetros), nunca fixos aqui.
  * Se o desvio observado for pelo menos o dobro do limiar configurado, a
  * gravidade é escalada em um nível (ex.: configurado como AMARELO vira
  * VERMELHO quando o problema é muito mais grave que o limiar mínimo).
@@ -108,7 +108,7 @@ export function avaliarAlertasSnapshot(
     }
 
     const cfgAtraso = configAtiva(configs, 'AUMENTO_ATRASO_MEDIO')
-    if (cfgAtraso) {
+    if (cfgAtraso && atual.atrasoMedioDias !== null && anterior.atrasoMedioDias !== null) {
       const deltaAtraso = atual.atrasoMedioDias - anterior.atrasoMedioDias
       if (deltaAtraso >= cfgAtraso.limiar) {
         alertas.push({ tipo: cfgAtraso.descricao, gravidade: gravidadePorDesvio(cfgAtraso, deltaAtraso), descricao: `Atraso médio subiu ${deltaAtraso.toFixed(0)} dias` })

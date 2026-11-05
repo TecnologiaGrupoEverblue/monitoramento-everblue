@@ -1,7 +1,8 @@
 import type { Alerta, ChaveItemChecklist, Cliente, Gravidade, Juridico, PlanoAcao, SnapshotSemanal, StatusPlano } from '../models/types'
-import { diasEntre, formatarMoeda, formatarPercentual } from '../utils/formatters'
+import { diasEntre, formatarDias, formatarMoeda, formatarPercentual } from '../utils/formatters'
 import type { AnaliseTransacional } from './motorTransacional'
 import { compararRestritivos, descreverVariacao, totalRestritivos, type LinhaRestritivo } from './restritivos'
+import type { BitfinAging, BitfinEvento, ManifestoContaFoto } from '../bitfin/foto'
 
 /**
  * Checklist de Análise Semanal — roteiro ponto a ponto que o executivo
@@ -54,6 +55,16 @@ export type DadoVisualChecklist =
   | { tipo: 'statusPlano'; status: StatusPlano }
   | { tipo: 'statusJuridico'; status: StatusJuridicoResumo }
   | { tipo: 'categorias'; itens: { label: string; valor: number; exibicao: string; cor?: Gravidade }[] }
+  | { tipo: 'manifesto'; total: number; perc: number | null; baseRisco: number; tipos: CategoriaManifesto[]; todas: CategoriaManifesto[] }
+
+/** Categoria do manifesto (mesma ordem e nomes da tela do Bitfin). */
+export interface CategoriaManifesto {
+  chave: keyof Omit<ManifestoContaFoto, 'contaOperacionalId' | 'produto' | 'noManifesto' | 'risco'>
+  label: string
+  descricao: string
+  valor: number
+  perc: number | null
+}
 
 export interface SugestaoChecklist {
   item: ChaveItemChecklist
@@ -75,9 +86,77 @@ interface ParametrosSugestao {
   analiseTransacional: AnaliseTransacional | null
   /** Restritivos por tipo da semana e da anterior (quando houver). */
   restritivos?: { atual: LinhaRestritivo[]; anterior: LinhaRestritivo[] | null }
+  /** 1.2: dados da foto do Bitfin. `null` = cliente sem foto (fail-closed);
+   * ausente = chamada anterior à 1.2 (mantém o comportamento antigo). */
+  bitfin?: {
+    tiradaEm: string
+    eventos: BitfinEvento[]
+    limite: { total: number; origem: 'PROPOSTA' | 'PRODUTOS' | 'SEM_LIMITE'; validade: string | null }
+    /** Vencimentário do Bitfin (a vencer e vencido por faixa). `null` = não veio para este cliente. Ausente = foto antiga. */
+    aging?: BitfinAging | null
+    /** Manifesto por conta, da foto (contas fora do manifesto marcadas). */
+    manifesto?: { baseRisco: number; contas: ManifestoContaFoto[] }
+  } | null
 }
 
 const SEM_DADO: SugestaoChecklist['gravidade'] = 'AMARELO'
+
+/** Categorias do manifesto, na ordem da tela do Bitfin. `problema`: entram na
+ * soma do card (decisão de 05/11: os 4 tipos). */
+export const CATEGORIAS_MANIFESTO: { chave: CategoriaManifesto['chave']; label: string; descricao: string; problema: boolean }[] = [
+  { chave: 'semAtuacao', label: 'Sem Atuação', descricao: 'Título ainda sem nenhuma manifestação do sacado nem atuação da equipe.', problema: false },
+  { chave: 'inacessivel', label: 'Inacessível', descricao: 'Não foi possível consultar a manifestação do título (documento sem acesso).', problema: false },
+  { chave: 'naoConfirma', label: 'Sacado não Confirma', descricao: 'O sacado foi contatado e não confirmou a operação.', problema: false },
+  { chave: 'promessa', label: 'Promessa de Pagamento', descricao: 'O sacado prometeu pagar o título.', problema: false },
+  { chave: 'transacaoDesconhecida', label: 'Transação Desconhecida', descricao: 'O sacado declarou desconhecer a operação (não reconhece a nota/duplicata).', problema: true },
+  { chave: 'lastroInconsistente', label: 'Lastro Inconsistente', descricao: 'O documento que dá lastro ao título não confere (divergente, cancelado ou inexistente).', problema: true },
+  { chave: 'naoConcluida', label: 'Transação não Concluída', descricao: 'O sacado informou que a operação não foi realizada (mercadoria ou serviço não entregue).', problema: true },
+  { chave: 'protestado', label: 'Protestado', descricao: 'Título enviado a protesto em cartório.', problema: true },
+  { chave: 'ciencia', label: 'Ciência da Transação', descricao: 'O sacado declarou ciência da operação, sem confirmá-la ainda.', problema: false },
+  { chave: 'emAndamento', label: 'Transação em Andamento', descricao: 'Manifestação em andamento (entrega ou serviço ainda em curso).', problema: false },
+  { chave: 'concluida', label: 'Transação Concluída', descricao: 'O sacado confirmou a operação.', problema: false },
+]
+
+/** Manifesto do cliente pela foto: soma das contas que entram no manifesto. */
+export function resumirManifesto(m: { baseRisco: number; contas: ManifestoContaFoto[] }) {
+  const contas = m.contas.filter((c) => c.noManifesto)
+  const perc = (v: number) => (m.baseRisco > 0 ? Math.round((v / m.baseRisco) * 10000) / 100 : null)
+  const todas: CategoriaManifesto[] = CATEGORIAS_MANIFESTO.map((cat) => {
+    const valor = Math.round(contas.reduce((t, c) => t + (c[cat.chave] ?? 0), 0) * 100) / 100
+    return { chave: cat.chave, label: cat.label, descricao: cat.descricao, valor, perc: perc(valor) }
+  })
+  const problemas = new Set(CATEGORIAS_MANIFESTO.filter((c) => c.problema).map((c) => c.chave))
+  const tipos = todas.filter((c) => problemas.has(c.chave))
+  const total = Math.round(tipos.reduce((t, c) => t + c.valor, 0) * 100) / 100
+  return { total, perc: perc(total), baseRisco: m.baseRisco, tipos, todas }
+}
+
+export interface FaixaVencimentario {
+  grupo: 'A_VENCER' | 'VENCIDO'
+  faixa: string
+  valor: number
+  /** Vencido há mais de 90 dias (crítico). */
+  acima90: boolean
+}
+
+/** Vencimentário (aging) do Bitfin em faixas, na ordem de leitura do comitê:
+ * a vencer da mais curta à mais longa, depois o vencido do mais recente ao mais antigo. */
+export function faixasVencimentario(a: BitfinAging): FaixaVencimentario[] {
+  return [
+    { grupo: 'A_VENCER', faixa: 'até 30 dias', valor: a.vencer.ate30, acima90: false },
+    { grupo: 'A_VENCER', faixa: '31 a 60 dias', valor: a.vencer.de31a60, acima90: false },
+    { grupo: 'A_VENCER', faixa: '61 a 90 dias', valor: a.vencer.de61a90, acima90: false },
+    { grupo: 'A_VENCER', faixa: '91 a 180 dias', valor: a.vencer.de91a180, acima90: false },
+    { grupo: 'A_VENCER', faixa: '181 a 360 dias', valor: a.vencer.de181a360, acima90: false },
+    { grupo: 'A_VENCER', faixa: 'acima de 360 dias', valor: a.vencer.acima360, acima90: false },
+    { grupo: 'VENCIDO', faixa: '6 a 30 dias', valor: a.vencido.de6a30, acima90: false },
+    { grupo: 'VENCIDO', faixa: '31 a 60 dias', valor: a.vencido.de31a60, acima90: false },
+    { grupo: 'VENCIDO', faixa: '61 a 90 dias', valor: a.vencido.de61a90, acima90: false },
+    { grupo: 'VENCIDO', faixa: '91 a 180 dias', valor: a.vencido.de91a180, acima90: true },
+    { grupo: 'VENCIDO', faixa: '181 a 360 dias', valor: a.vencido.de181a360, acima90: true },
+    { grupo: 'VENCIDO', faixa: 'acima de 360 dias', valor: a.vencido.acima360, acima90: true },
+  ]
+}
 
 /** Calcula, para um cliente, a sugestão automática (gravidade + resumo +
  * dado visual) de cada item do checklist — cruzando sempre dado real da
@@ -116,11 +195,16 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
     })
   }
 
-  // 2. Limite Consumido
+  // 2. Limite Consumido — 1.2: mostra o limite do cliente vindo do Bitfin.
+  // Risco sem limite vigente nunca aparece como "0% consumido" (fail-closed).
+  const limiteBitfin = params.bitfin?.limite
+  const semLimite = s.limiteGlobal <= 0 && s.riscoCliente > 0
   resultado.push({
     item: 'LIMITE_CONSUMIDO',
-    gravidade: s.percConsumoLimite >= 100 ? 'VERMELHO' : s.percConsumoLimite >= 85 ? 'AMARELO' : 'VERDE',
-    resumo: `${formatarPercentual(s.percConsumoLimite)} do limite global consumido.`,
+    gravidade: semLimite || s.percConsumoLimite >= 100 ? 'VERMELHO' : s.percConsumoLimite >= 85 ? 'AMARELO' : 'VERDE',
+    resumo: semLimite
+      ? `Sem limite vigente${limiteBitfin ? ' no Bitfin' : ''} para um risco de ${formatarMoeda(s.riscoCliente)}.`
+      : `Limite do cliente${limiteBitfin ? ' (Bitfin' + (limiteBitfin.origem === 'PROPOSTA' ? `, proposta vigente${limiteBitfin.validade ? ` até ${limiteBitfin.validade.split('-').reverse().join('/')}` : ''}` : ', soma dos produtos') + ')' : ''}: ${formatarMoeda(s.limiteGlobal)} · ${formatarPercentual(s.percConsumoLimite)} consumido (risco ${formatarMoeda(s.riscoCliente)}).`,
     dado: { tipo: 'percentual', valor: s.percConsumoLimite },
   })
 
@@ -174,26 +258,33 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
 
   // 7. Prazo médio da Carteira — compara com o início da janela recente (não
   // só a semana anterior) pra pegar aumento SUSTENTADO, não ruído de 1 semana.
-  const seriePrazoMedio = serieRecente.map((snap) => snap.prazoMedioCarteiraDias)
-  const prazoMedioBase = seriePrazoMedio.length > 1 ? seriePrazoMedio[0] : null
-  const variacaoPrazoMedio = prazoMedioBase && prazoMedioBase > 0 ? ((s.prazoMedioCarteiraDias - prazoMedioBase) / prazoMedioBase) * 100 : null
-  const prazoSubindoForte = variacaoPrazoMedio !== null && variacaoPrazoMedio >= 25
-  const prazoSubindoModerado = variacaoPrazoMedio !== null && variacaoPrazoMedio >= 10
-  resultado.push({
-    item: 'PRAZO_MEDIO_CARTEIRA',
-    gravidade: prazoSubindoForte || s.prazoMedioCarteiraDias > 90 ? 'VERMELHO' : prazoSubindoModerado || s.prazoMedioCarteiraDias > 75 ? 'AMARELO' : 'VERDE',
-    resumo:
-      variacaoPrazoMedio !== null
-        ? `Prazo médio em ${s.prazoMedioCarteiraDias} dias — ${variacaoPrazoMedio >= 0 ? 'subiu' : 'caiu'} ${Math.abs(variacaoPrazoMedio).toFixed(0)}% nas últimas semanas (${prazoMedioBase!.toFixed(0)} → ${s.prazoMedioCarteiraDias} dias).`
-        : `Prazo médio da carteira: ${s.prazoMedioCarteiraDias} dias.`,
-    dado: { tipo: 'tendencia', serie: seriePrazoMedio, variacaoPerc: variacaoPrazoMedio },
-  })
+  // 1.2: prazo ausente (cliente sem operação de duplicata nem de Nota
+  // Comercial) é "não informado", nunca 0 dias verde.
+  const seriePrazoMedio = serieRecente.map((snap) => snap.prazoMedioCarteiraDias).filter((v): v is number => v !== null)
+  if (s.prazoMedioCarteiraDias === null) {
+    resultado.push({ item: 'PRAZO_MEDIO_CARTEIRA', gravidade: SEM_DADO, resumo: 'Prazo médio não informado: sem operação de duplicata, cheque, contrato ou Nota Comercial.' })
+  } else {
+    const prazoAtual = s.prazoMedioCarteiraDias
+    const prazoMedioBase = seriePrazoMedio.length > 1 ? seriePrazoMedio[0] : null
+    const variacaoPrazoMedio = prazoMedioBase && prazoMedioBase > 0 ? ((prazoAtual - prazoMedioBase) / prazoMedioBase) * 100 : null
+    const prazoSubindoForte = variacaoPrazoMedio !== null && variacaoPrazoMedio >= 25
+    const prazoSubindoModerado = variacaoPrazoMedio !== null && variacaoPrazoMedio >= 10
+    resultado.push({
+      item: 'PRAZO_MEDIO_CARTEIRA',
+      gravidade: prazoSubindoForte || prazoAtual > 90 ? 'VERMELHO' : prazoSubindoModerado || prazoAtual > 75 ? 'AMARELO' : 'VERDE',
+      resumo:
+        variacaoPrazoMedio !== null
+          ? `Prazo médio em ${formatarDias(prazoAtual)} — ${variacaoPrazoMedio >= 0 ? 'subiu' : 'caiu'} ${Math.abs(variacaoPrazoMedio).toFixed(0)}% nas últimas semanas (${prazoMedioBase!.toFixed(0)} → ${formatarDias(prazoAtual)}).`
+          : `Prazo médio da carteira: ${formatarDias(prazoAtual)}.`,
+      dado: { tipo: 'tendencia', serie: seriePrazoMedio, variacaoPerc: variacaoPrazoMedio },
+    })
+  }
 
   // 8. Liquidez 15/30/60
   resultado.push({
     item: 'LIQUIDEZ_15_30_60',
     gravidade: s.il30 === null ? 'AMARELO' : s.il30 < 60 ? 'VERMELHO' : s.il30 < 80 ? 'AMARELO' : 'VERDE',
-    resumo: `${s.il30 === null ? 'IL 30 dias sem base' : `IL 30 dias em ${formatarPercentual(s.il30)}`} (IL 60: ${s.il60 === null ? 'sem base' : formatarPercentual(s.il60)}). Liquidado no período: ${formatarMoeda(s.liquidadoNoPeriodo)}${s.recompras > 0 ? ` · Recompras: ${formatarMoeda(s.recompras)} (${s.motivoRecompra ?? 'motivo não informado'})` : ''}.`,
+    resumo: `${s.il30 === null ? 'IL 30 dias sem base' : `IL 30 dias em ${formatarPercentual(s.il30)}`} (IL 60: ${s.il60 === null ? 'sem base' : formatarPercentual(s.il60)}). Liquidado no período: ${s.liquidadoNoPeriodo === null ? 'não informado' : formatarMoeda(s.liquidadoNoPeriodo)}${s.recompras > 0 ? ` · Recompras: ${formatarMoeda(s.recompras)} (${s.motivoRecompra ?? 'motivo não informado'})` : ''}.`,
     dado: {
       tipo: 'percentuais',
       itens: [
@@ -204,10 +295,26 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
     },
   })
 
-  // 9. Manifestos
+  // 9. Manifestos — 1.4.3: soma dos 4 tipos (transação desconhecida, lastro
+  // inconsistente, transação não concluída e protestado), pela foto do Bitfin,
+  // com cada categoria no card. Sem a foto: posição semanal (sem protestado).
+  if (params.bitfin?.manifesto) {
+    const r = resumirManifesto(params.bitfin.manifesto)
+    const lastro = r.tipos.find((t) => t.chave === 'lastroInconsistente')!.valor
+    const desconhecida = r.tipos.find((t) => t.chave === 'transacaoDesconhecida')!.valor
+    resultado.push({
+      item: 'MANIFESTOS',
+      gravidade: lastro > 0 || desconhecida > 0 || (r.perc ?? 0) >= 5 ? 'VERMELHO' : r.total > 0 ? 'AMARELO' : 'VERDE',
+      resumo:
+        r.baseRisco <= 0
+          ? 'Sem carteira com manifesto (só Nota Comercial, Confissão de Dívida ou Cobrança Simples).'
+          : r.total > 0
+            ? `${formatarMoeda(r.total)} em problemas de manifesto (${formatarPercentual(r.perc ?? 0)} do risco).`
+            : 'Sem transação desconhecida, lastro inconsistente, transação não concluída ou protesto.',
+      dado: r.baseRisco > 0 ? { tipo: 'manifesto', ...r } : undefined,
+    })
+  } else {
   const manifestos = [
-    { label: 'Inacessível', valor: s.manifestoInacessivel },
-    { label: 'Não confirma', valor: s.manifestoNaoConfirma },
     { label: 'Transação desconhecida', valor: s.manifestoTransacaoDesconhecida },
     { label: 'Lastro inconsistente', valor: s.manifestoLastroInconsistente },
     { label: 'Transação não concluída', valor: s.manifestoTransacaoNaoConcluida },
@@ -215,30 +322,37 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
   const totalManifestos = manifestos.reduce((soma, m) => soma + m.valor, 0)
   resultado.push({
     item: 'MANIFESTOS',
-    gravidade: s.manifestoLastroInconsistente > 0 ? 'VERMELHO' : totalManifestos > 0 ? 'AMARELO' : 'VERDE',
-    resumo: totalManifestos > 0 ? `${formatarMoeda(totalManifestos)} em problemas de manifesto (${formatarPercentual(s.manifestoPercSemAtuacao)} sem atuação).` : 'Sem problemas de manifesto na semana.',
+    gravidade: s.manifestoLastroInconsistente > 0 || s.manifestoTransacaoDesconhecida > 0 ? 'VERMELHO' : totalManifestos > 0 ? 'AMARELO' : 'VERDE',
+    resumo: totalManifestos > 0 ? `${formatarMoeda(totalManifestos)} em problemas de manifesto (protestado não informado: sem foto do Bitfin).` : 'Sem problemas de manifesto na semana (protestado não informado: sem foto do Bitfin).',
     dado:
       manifestos.length > 0
-        ? { tipo: 'categorias', itens: manifestos.map((m) => ({ ...m, exibicao: formatarMoeda(m.valor), cor: (m.label === 'Lastro inconsistente' ? 'VERMELHO' : 'AMARELO') as Gravidade })) }
+        ? { tipo: 'categorias', itens: manifestos.map((m) => ({ ...m, exibicao: formatarMoeda(m.valor), cor: 'VERMELHO' as Gravidade })) }
         : undefined,
   })
+  }
 
   // 10. Comportamento no Calendário — mesma lógica: compara com o início da
   // janela recente pra ver se o atraso vem subindo (piorando) ou mudou de rota.
-  const serieAtrasoMedio = serieRecente.map((snap) => snap.atrasoMedioDias)
-  const atrasoMedioBase = serieAtrasoMedio.length > 1 ? serieAtrasoMedio[0] : null
-  const variacaoAtrasoMedio = atrasoMedioBase && atrasoMedioBase > 0 ? ((s.atrasoMedioDias - atrasoMedioBase) / atrasoMedioBase) * 100 : null
-  const atrasoSubindoForte = variacaoAtrasoMedio !== null && variacaoAtrasoMedio >= 25
-  const atrasoSubindoModerado = variacaoAtrasoMedio !== null && variacaoAtrasoMedio >= 10
-  resultado.push({
-    item: 'COMPORTAMENTO_CALENDARIO',
-    gravidade: s.atrasoMedioDias >= 20 || atrasoSubindoForte ? 'VERMELHO' : s.atrasoMedioDias >= 8 || atrasoSubindoModerado ? 'AMARELO' : 'VERDE',
-    resumo:
-      variacaoAtrasoMedio !== null
-        ? `Atraso médio em ${s.atrasoMedioDias} dias — ${variacaoAtrasoMedio >= 0 ? 'subiu' : 'caiu'} ${Math.abs(variacaoAtrasoMedio).toFixed(0)}% nas últimas semanas (${atrasoMedioBase!.toFixed(0)} → ${s.atrasoMedioDias} dias).`
-        : `Atraso médio de pagamento: ${s.atrasoMedioDias} dias.`,
-    dado: { tipo: 'tendencia', serie: serieAtrasoMedio, variacaoPerc: variacaoAtrasoMedio },
-  })
+  // 1.2: sem título liquidado na janela de 30 dias o atraso é "não informado".
+  const serieAtrasoMedio = serieRecente.map((snap) => snap.atrasoMedioDias).filter((v): v is number => v !== null)
+  if (s.atrasoMedioDias === null) {
+    resultado.push({ item: 'COMPORTAMENTO_CALENDARIO', gravidade: SEM_DADO, resumo: 'Atraso médio não informado: nenhum título liquidado na janela de 30 dias.' })
+  } else {
+    const atrasoAtual = s.atrasoMedioDias
+    const atrasoMedioBase = serieAtrasoMedio.length > 1 ? serieAtrasoMedio[0] : null
+    const variacaoAtrasoMedio = atrasoMedioBase && atrasoMedioBase > 0 ? ((atrasoAtual - atrasoMedioBase) / atrasoMedioBase) * 100 : null
+    const atrasoSubindoForte = variacaoAtrasoMedio !== null && variacaoAtrasoMedio >= 25
+    const atrasoSubindoModerado = variacaoAtrasoMedio !== null && variacaoAtrasoMedio >= 10
+    resultado.push({
+      item: 'COMPORTAMENTO_CALENDARIO',
+      gravidade: atrasoAtual >= 20 || atrasoSubindoForte ? 'VERMELHO' : atrasoAtual >= 8 || atrasoSubindoModerado ? 'AMARELO' : 'VERDE',
+      resumo:
+        variacaoAtrasoMedio !== null
+          ? `Atraso médio em ${formatarDias(atrasoAtual)} — ${variacaoAtrasoMedio >= 0 ? 'subiu' : 'caiu'} ${Math.abs(variacaoAtrasoMedio).toFixed(0)}% nas últimas semanas (${atrasoMedioBase!.toFixed(0)} → ${formatarDias(atrasoAtual)}).`
+          : `Atraso médio de pagamento: ${formatarDias(atrasoAtual)}.`,
+      dado: { tipo: 'tendencia', serie: serieAtrasoMedio, variacaoPerc: variacaoAtrasoMedio },
+    })
+  }
 
   // 11. Evolução de Restritivos
   const serieRestritivos = serieRecente.map((snap) => snap.restritivos)
@@ -268,12 +382,51 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
     })
   }
 
-  // 12. Aging da Carteira
-  resultado.push({
-    item: 'AGING_CARTEIRA',
-    gravidade: s.agingCarteiraDias > 120 ? 'VERMELHO' : s.agingCarteiraDias > 60 ? 'AMARELO' : 'VERDE',
-    resumo: `Aging da carteira: ${s.agingCarteiraDias} dias.`,
-  })
+  // 12. Aging da Carteira — 1.4.1: o vencimentário do Bitfin (a vencer e vencido
+  // por faixa). Sem foto ou sem vencimentário: "não conferido", nunca "0 dias".
+  if (params.bitfin !== undefined && (params.bitfin === null || params.bitfin.aging !== undefined)) {
+    const aging = params.bitfin?.aging ?? null
+    if (!aging) {
+      resultado.push({
+        item: 'AGING_CARTEIRA',
+        gravidade: SEM_DADO,
+        resumo: params.bitfin === null ? 'Sem foto do Bitfin para este cliente: vencimentário não conferido.' : 'O Bitfin não trouxe o vencimentário deste cliente: conferir no Bitfin.',
+      })
+    } else {
+      const faixas = faixasVencimentario(aging)
+      const aVencer = faixas.filter((f) => f.grupo === 'A_VENCER').reduce((t, f) => t + f.valor, 0)
+      const vencido = faixas.filter((f) => f.grupo === 'VENCIDO').reduce((t, f) => t + f.valor, 0)
+      const vencidoAcima90 = faixas.filter((f) => f.acima90).reduce((t, f) => t + f.valor, 0)
+      const total = aVencer + vencido
+      const comValor = faixas.filter((f) => f.valor > 0)
+      resultado.push({
+        item: 'AGING_CARTEIRA',
+        gravidade: vencidoAcima90 > 0 ? 'VERMELHO' : vencido > 0 ? 'AMARELO' : 'VERDE',
+        resumo:
+          total === 0
+            ? 'Sem títulos a vencer ou vencidos no vencimentário do Bitfin.'
+            : `A vencer ${formatarMoeda(aVencer)} · Vencido ${formatarMoeda(vencido)}${vencidoAcima90 > 0 ? ` (${formatarMoeda(vencidoAcima90)} há mais de 90 dias)` : ''}.`,
+        dado:
+          comValor.length > 0
+            ? {
+                tipo: 'categorias',
+                itens: comValor.map((f) => ({
+                  label: `${f.grupo === 'A_VENCER' ? 'A vencer' : 'Vencido'} ${f.faixa}`,
+                  valor: f.valor,
+                  exibicao: formatarMoeda(f.valor),
+                  cor: f.grupo === 'A_VENCER' ? 'VERDE' : f.acima90 ? 'VERMELHO' : 'AMARELO',
+                })),
+              }
+            : undefined,
+      })
+    }
+  } else {
+    resultado.push({
+      item: 'AGING_CARTEIRA',
+      gravidade: s.agingCarteiraDias > 120 ? 'VERMELHO' : s.agingCarteiraDias > 60 ? 'AMARELO' : 'VERDE',
+      resumo: `Aging da carteira: ${s.agingCarteiraDias} dias.`,
+    })
+  }
 
   // 13. Praça de pagamento — sem fonte de dado estruturada no sistema hoje.
   resultado.push({ item: 'PRACA_PAGAMENTO', gravidade: SEM_DADO, resumo: 'Sem dado estruturado no sistema — registrar parecer manualmente com base na carteira analisada.' })
@@ -294,7 +447,26 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
     dado: planoRelevante ? { tipo: 'statusPlano', status: planoRelevante.status } : undefined,
   })
 
-  // 15. Eventos (alertas abertos)
+  // 15. Eventos — 1.2: só os eventos do Bitfin da última semana.
+  if (params.bitfin !== undefined) {
+    const eventos = params.bitfin?.eventos ?? []
+    const porCategoria = new Map<string, number>()
+    for (const e of eventos) porCategoria.set(e.categoria ?? 'Sem categoria', (porCategoria.get(e.categoria ?? 'Sem categoria') ?? 0) + 1)
+    resultado.push({
+      item: 'EVENTOS',
+      gravidade: params.bitfin === null ? 'AMARELO' : eventos.length > 0 ? 'AMARELO' : 'VERDE',
+      resumo:
+        params.bitfin === null
+          ? 'Sem foto do Bitfin para este cliente: eventos da semana não conferidos.'
+          : eventos.length > 0
+            ? `${eventos.length} evento(s) no Bitfin na última semana: ${eventos.slice(0, 3).map((e) => e.titulo).join('; ')}${eventos.length > 3 ? '…' : ''}.`
+            : 'Nenhum evento no Bitfin na última semana.',
+      dado:
+        eventos.length > 0
+          ? { tipo: 'categorias', itens: [...porCategoria].map(([label, valor]) => ({ label, valor, exibicao: String(valor) })) }
+          : undefined,
+    })
+  } else {
   const vermelhos = alertas.filter((a) => a.gravidade === 'VERMELHO')
   const amarelos = alertas.filter((a) => a.gravidade === 'AMARELO')
   const verdes = alertas.filter((a) => a.gravidade === 'VERDE')
@@ -314,6 +486,7 @@ export function sugerirChecklist(params: ParametrosSugestao): SugestaoChecklist[
           }
         : undefined,
   })
+  }
 
   // 16. Dados transacionais da conta movimento — cruza os últimos 6 meses de
   // movimento (entradas, saídas, frequência, maior pagamento) pra checar se

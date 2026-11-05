@@ -55,15 +55,18 @@ fi
 info "2/5 Preparando a versão nova ao lado da atual"
 CARIMBO="$(date +%Y%m%d-%H%M%S)"
 DESTINO_NOVA="$BASE/app.nova-$CARIMBO"
+# Sobras de tentativas anteriores que pararam no meio.
+sudo bash -c "rm -rf -- '$BASE'/app.nova-*"
 sudo mkdir -p "$DESTINO_NOVA" "$RELEASES"
 sudo chown "$(id -u)":"$(id -g)" "$DESTINO_NOVA"
 sudo chmod 700 "$RELEASES"          # releases guardam .env e chave: só o dono
 tar -xzf "$PACOTE" -C "$DESTINO_NOVA" --strip-components=1
 
 # O que é DESTA instalação e não vem no pacote: configuração e certificado.
-cp -p "$APP/.env" "$DESTINO_NOVA/.env"
+# .env e chave são do root (600): copiados com sudo, dono = quem roda o roteiro.
+sudo install -m 600 -o "$(id -u)" -g "$(id -g)" "$APP/.env" "$DESTINO_NOVA/.env"
 for f in emon.key emon.crt emon.csr openssl.cnf; do
-  [[ -f "$APP/infrastructure/nginx/certs/$f" ]] && cp -p "$APP/infrastructure/nginx/certs/$f" "$DESTINO_NOVA/infrastructure/nginx/certs/$f"
+  if sudo test -f "$APP/infrastructure/nginx/certs/$f"; then sudo cp -p "$APP/infrastructure/nginx/certs/$f" "$DESTINO_NOVA/infrastructure/nginx/certs/$f"; fi
 done
 ok "versão $NOVA pronta em $DESTINO_NOVA (com .env e certificado da instalação)"
 

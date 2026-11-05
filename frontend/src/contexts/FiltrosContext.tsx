@@ -1,6 +1,8 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { useQueries } from '@tanstack/react-query'
 import type { Carteira, Cliente, FiltrosGlobais, Gerente, GrupoEconomico, Plataforma } from '../models/types'
-import { cadastrosRepository, clienteRepository, FILTROS_VAZIOS, snapshotRepository } from '../repositories'
+import { FILTROS_VAZIOS } from '../repositories'
+import { consultas } from '../consultas'
 
 interface OpcoesFiltro {
   gerentes: Gerente[]
@@ -21,39 +23,47 @@ interface FiltrosContextValue {
   limparFiltros: () => void
   opcoes: OpcoesFiltro
   carregando: boolean
-  versaoDados: number
-  recarregarDados: () => void
 }
 
 const FiltrosContext = createContext<FiltrosContextValue | null>(null)
 
 export function FiltrosProvider({ children }: { children: ReactNode }) {
-  const [filtros, setFiltros] = useState<FiltrosGlobais>(FILTROS_VAZIOS)
-  const [opcoes, setOpcoes] = useState<OpcoesFiltro>({ gerentes: [], plataformas: [], grupos: [], carteiras: [], setores: [], ramos: [], produtos: [], semanas: [], clientes: [] })
-  const [carregando, setCarregando] = useState(true)
-  const [versaoDados, setVersaoDados] = useState(0)
+  const r = useQueries({
+    queries: [
+      consultas.gerentes(),
+      consultas.plataformas(),
+      consultas.grupos(),
+      consultas.valoresDistintos(),
+      consultas.semanas(),
+      consultas.clientes(),
+      consultas.carteiras(),
+    ],
+  })
+  const [gerentes, plataformas, grupos, distintos, semanas, clientes, carteiras] = r
+  const carregando = r.some((q) => q.isPending)
 
-  useEffect(() => {
-    let ativo = true
-    setCarregando(true)
-    Promise.all([
-      cadastrosRepository.listarGerentes(),
-      cadastrosRepository.listarPlataformas(),
-      cadastrosRepository.listarGrupos(),
-      clienteRepository.valoresDistintos(),
-      snapshotRepository.listarSemanasDisponiveis(),
-      clienteRepository.listarTodos(),
-      cadastrosRepository.listarCarteiras(),
-    ]).then(([gerentes, plataformas, grupos, distintos, semanas, clientes, carteiras]) => {
-      if (!ativo) return
-      setOpcoes({ gerentes, plataformas, grupos, carteiras, setores: distintos.setores, ramos: distintos.ramos, produtos: distintos.produtos, semanas, clientes })
-      setFiltros((atual) => (atual.semanaRef ? atual : { ...atual, semanaRef: semanas[semanas.length - 1] ?? null }))
-      setCarregando(false)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [versaoDados])
+  const opcoes = useMemo<OpcoesFiltro>(
+    () => ({
+      gerentes: gerentes.data ?? [],
+      plataformas: plataformas.data ?? [],
+      grupos: grupos.data ?? [],
+      carteiras: carteiras.data ?? [],
+      setores: distintos.data?.setores ?? [],
+      ramos: distintos.data?.ramos ?? [],
+      produtos: distintos.data?.produtos ?? [],
+      semanas: semanas.data ?? [],
+      clientes: clientes.data ?? [],
+    }),
+    [gerentes.data, plataformas.data, grupos.data, carteiras.data, distintos.data, semanas.data, clientes.data],
+  )
+
+  // Sem semana escolhida, a mais recente com posição.
+  const ultimaSemana = semanas.data?.[semanas.data.length - 1] ?? null
+  const [filtrosGravados, setFiltros] = useState<FiltrosGlobais>(FILTROS_VAZIOS)
+  const filtros = useMemo(
+    () => (filtrosGravados.semanaRef || !ultimaSemana ? filtrosGravados : { ...filtrosGravados, semanaRef: ultimaSemana }),
+    [filtrosGravados, ultimaSemana],
+  )
 
   const value = useMemo<FiltrosContextValue>(
     () => ({
@@ -63,10 +73,8 @@ export function FiltrosProvider({ children }: { children: ReactNode }) {
       limparFiltros: () => setFiltros({ ...FILTROS_VAZIOS, semanaRef: filtros.semanaRef }),
       opcoes,
       carregando,
-      versaoDados,
-      recarregarDados: () => setVersaoDados((v) => v + 1),
     }),
-    [filtros, opcoes, carregando, versaoDados],
+    [filtros, opcoes, carregando],
   )
 
   return <FiltrosContext.Provider value={value}>{children}</FiltrosContext.Provider>

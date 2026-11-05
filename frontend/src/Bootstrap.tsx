@@ -1,35 +1,29 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import type { SessaoUsuario } from '@monitoramento/dominio'
 import App from './App'
 import { ErroApi } from './api/cliente'
+import { consultas } from './consultas'
 import { DrillDownProvider } from './contexts/DrillDownContext'
 import { FiltrosProvider } from './contexts/FiltrosContext'
 import { SessaoProvider } from './contexts/SessaoContext'
 import LoginEmergencia from './pages/LoginEmergencia'
 import Login from './pages/Login'
-import { sessaoRepository } from './repositories'
 
 const ROTAS_PUBLICAS = ['/login', '/entrar/emergencia']
 
 function AreaAutenticada() {
-  const [usuario, setUsuario] = useState<SessaoUsuario | null>(null)
-  const [erro, setErro] = useState<string | null>(null)
+  const sessao = useQuery(consultas.sessao())
+  const usuario = sessao.data ?? null
+  const semSessao = sessao.error instanceof ErroApi && (sessao.error.status === 401 || sessao.error.status === 403)
+  const erro = sessao.error && !semSessao ? sessao.error.message : null
 
   useEffect(() => {
-    sessaoRepository
-      .obter()
-      .then(setUsuario)
-      .catch((e: unknown) => {
-        if (e instanceof ErroApi && (e.status === 401 || e.status === 403)) {
-          const destino = `${window.location.pathname}${window.location.search}`
-          const motivo = e.codigo === 'sem_acesso' ? '&erro=sem_acesso' : ''
-          window.location.replace(`/login?destino=${encodeURIComponent(destino)}${motivo}`)
-          return
-        }
-        setErro(e instanceof Error ? e.message : String(e))
-      })
-  }, [])
+    if (!semSessao || !(sessao.error instanceof ErroApi)) return
+    const destino = `${window.location.pathname}${window.location.search}`
+    const motivo = sessao.error.codigo === 'sem_acesso' ? '&erro=sem_acesso' : ''
+    window.location.replace(`/login?destino=${encodeURIComponent(destino)}${motivo}`)
+  }, [semSessao, sessao.error])
 
   if (erro) {
     return (

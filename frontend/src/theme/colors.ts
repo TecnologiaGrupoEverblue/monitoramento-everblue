@@ -37,6 +37,7 @@ export const statusCor: Record<string, { texto: string; fundo: string }> = {
   NORMAL: { texto: risco.normal, fundo: risco.normalFundo },
   MONITORAMENTO: { texto: risco.atencao, fundo: risco.atencaoFundo },
   SAIDA_DE_RISCO: { texto: risco.saida, fundo: risco.saidaFundo },
+  RECUPERACAO_DE_CREDITO: { texto: risco.critico, fundo: risco.criticoFundo },
   JURIDICO: { texto: risco.critico, fundo: risco.criticoFundo },
 }
 

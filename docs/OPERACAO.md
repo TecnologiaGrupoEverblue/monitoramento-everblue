@@ -43,6 +43,84 @@ do limite (`--max-old-space-size`), `memswap_limit` igual ao limite de memória
 (sem swap no contêiner) e `no-new-privileges` em todos os serviços. O nginx tem
 verificação própria em `http://127.0.0.1/nginx-saude` (porta 80, sem redirecionar).
 
+Foto do Bitfin e Mapa de Garantias (1.2.0): os dados dos clientes vêm direto
+do Bitfin (SQL Server 192.168.0.180, usuário só leitura), numa "foto" tirada
+pelo botão (Monitoramento → Foto do Bitfin) ou pelo agendador (horário e dias
+configuráveis, fuso de Brasília). A importação por planilha fica desligada
+(`IMPORTACAO_PLANILHA_HABILITADA=false`; `true` só como contingência).
+
+```bash
+# Primeira vez (senha do Bitfin digitada NA VM, sem eco):
+sudo bash infrastructure/scripts/configurar_bitfin.sh      # ou CONECTAR-BITFIN.cmd no Windows
+# Teste a qualquer momento (lê tudo, não grava nada):
+sudo docker compose --env-file .env -f infrastructure/compose.yaml exec -T api node dist/cli.js testar-bitfin
+# E-mail do Mapa de Garantias (segredo digitado NA VM, sem eco; testa e, se falhar, volta como estava):
+sudo bash infrastructure/scripts/configurar_email.sh        # ou CONFIGURAR-EMAIL.cmd no Windows (LIGAR-EMAIL-MAPA.cmd responde tudo sozinho: credenciais do login)
+# Testes avulsos:
+sudo docker compose --env-file .env -f infrastructure/compose.yaml exec -T api node dist/cli.js testar-rede-email
+sudo docker compose --env-file .env -f infrastructure/compose.yaml exec -T api node dist/cli.js testar-email voce@grupoeverblue.com.br
+```
+
+Conexões com bancos (1.3.0, ADR-020): ver `docs/CONEXOES-BANCO.md` —
+diagnóstico de aderência, orçamento agregado, gateway do Bitfin (fila,
+disjuntor, teto por classe, cancelamento real, zero retentativa), trilha
+`integracao_execucao`, `/api/health/dependencies`, exceção de TLS e runbook.
+
+Áreas de gestão (1.2.4, ADR-019): Foto do Bitfin, Mapa de Garantias e
+Parâmetros aparecem e funcionam só para quem tem, na Intranet, o perfil de
+acesso Administrador, Diretoria ou Gerente (`NIVEIS_ACESSO_GESTAO`, códigos
+admin, director, manager). O perfil vem do `/api/access/v1/me` a cada login e
+revalidação (5 min). Pré-requisito na Intranet: função "Consultar perfis de
+acesso" ligada para o Monitoramento (Configurações → Aplicações de acesso).
+Sem perfil informado = sem acesso; a conta de emergência local admin entra.
+Negativas ficam na auditoria (`acesso.negado`, motivo "perfil da Intranet").
+
+Limpeza total (1.2.2, ADR-018) — feita UMA vez, antes da primeira foto
+oficial: apaga tudo o que foi carregado por planilha e em testes (clientes,
+posições, alertas, classificações, eventos, importações, fotos, comitês,
+atas, checklists, planos de ação, saídas de risco, jurídico, IASR,
+restritivos, Mapa de Garantias, auditoria e todos os arquivos do MinIO).
+Mantém só usuários e perfis; regras de alerta/classificação e agendadores
+voltam ao padrão. Mostra antes o que será apagado e exige a frase
+`APAGAR TUDO`; a API fica parada durante a limpeza. Irreversível pelo sistema.
+
+```bash
+sudo bash infrastructure/scripts/zerar_dados.sh            # ou ZERAR-DADOS.cmd no Windows
+# Só ver o que seria apagado (não altera nada):
+sudo docker compose --env-file .env -f infrastructure/compose.yaml run --rm --no-deps -T migracao node dist/cli.js zerar-dados
+```
+
+E-mail (1.2.1): Microsoft 365 pelo Graph (`EMAIL_TRANSPORTE=graph`),
+caixa remetente em `EMAIL_REMETENTE` (escolha do responsável), credenciais em
+`GRAPH_MAIL_TENANT_ID`/`GRAPH_MAIL_CLIENT_ID`/`GRAPH_MAIL_CLIENT_SECRET`
+(vazios usam `ENTRA_*`). Pré-requisito: permissão de APLICAÇÃO `Mail.Send`
+com consentimento de administrador. O segredo expira: anote a validade e
+rode `configurar_email.sh` de novo ao renovar. Erros comuns, como aparecem:
+`AADSTS7000215` segredo inválido · `AADSTS7000222` segredo expirado ·
+`ErrorAccessDenied` falta Mail.Send/consentimento ou o Exchange não permite a
+caixa · `ErrorInvalidUser`/`MailboxNotEnabledForRESTAPI` caixa sem
+Exchange Online.
+
+Fail-closed: leitura que falha, situação desconhecida no Bitfin ou linha que
+não passa na validação da importação RECUSA a foto inteira (nada vai para a
+posição). Divergências (ex.: índice de liquidez recalculado ≠ gravado) ficam
+registradas e visíveis na execução; a liquidez de 60 a 180 dias desse cliente
+fica "não informado". A posição do comitê só é gravada quando pedida (opção no
+botão ou dia configurado no agendador). O Mapa de Garantias é enviado todos os
+dias após a foto agendada; se a foto falhar, o mapa NÃO sai e as cópias são
+avisadas. Execução que fica "em andamento" por queda do serviço é encerrada
+como falha após 30 minutos.
+
+Mesmo cliente em mais de uma linha (1.1.6): linhas com CNPJs diferentes que
+pertencem ao mesmo cliente cadastrado (ex.: matriz e filial) viram UMA posição
+na semana, somada: valores em R$ somados, percentuais ponderados pelo risco
+(% liquidado no prazo pelo liquidado), pior status e pior status de proposta,
+datas mais antigas, maior aging e maior atraso médio, restritivos somados por
+tipo; cadastro (grupo, gerente, plataforma, carteira) da primeira linha, com
+aviso se divergir. A prévia mostra o aviso "Linhas X e Y ... foram somadas".
+Se, mesmo assim, a gravação encontrar posição repetida na semana, a resposta
+é 409 com o nome do cliente (antes: 500 "erro inesperado"). Sem migração.
+
 Dois layouts de importação (1.1.5): a Importação Semanal aceita o modelo
 oficial OU a própria base do comitê ("Base Carteira - Monitoramento", aba
 "Análise da Carteira"). A base é convertida para o modelo e passa pela mesma
@@ -138,6 +216,25 @@ Logs em JSON (pino), rotação 10 MB × 3 por contêiner. Cada resposta traz
 | Teste da conta de emergência | Trimestral |
 | Espaço do disco de dados (`df -h /opt/everblue-monitoramento`) — o MinIO guarda todos os arquivos e versões | Semanal |
 | Backup de `dados/postgres` e `dados/minio` | Processo corporativo |
+| Expurgo das fotos de teste do Bitfin (automático, ADR-021) | Diário, a partir das 03:00 |
+
+## Retenção das fotos do Bitfin (1.4.0, ADR-021)
+
+- **Permanentes (nunca apagadas):** a foto que gravou a posição do comitê
+  (alimenta telas, gráficos e histórico) e a foto cuja base gerou Mapa de
+  Garantias enviado. O banco recusa apagá-las (gatilho da migração 0012),
+  inclusive pela Central de Arquivos.
+- **Teste / só histórico:** as demais fotos são apagadas depois de
+  `RETENCAO_FOTO_TESTE_DIAS` (padrão e mínimo 90). O expurgo roda sozinho na
+  API, uma vez por dia a partir das 03:00, em lotes de 200: apaga a leitura
+  bruta no MinIO (metadados e trilha do arquivo ficam), religa a comparação
+  com a foto anterior mantida e grava auditoria `foto.expurgo` com os ids.
+- Conferir o que é permanente, o que é teste e quando expira (só consulta):
+
+  ```bash
+  cd /opt/everblue-monitoramento/app && sudo bash infrastructure/scripts/retencao_fotos.sh
+  ```
+- O `verificar.sh` confere que os gatilhos de proteção existem.
 
 ## Arquivos (MinIO)
 

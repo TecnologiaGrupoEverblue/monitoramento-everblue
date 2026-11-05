@@ -1,34 +1,23 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import BotaoModoRevisao from '../components/BotaoModoRevisao'
 import ClientesTabela from '../components/ClientesTabela'
 import ResumoChecklistBadge from '../components/ResumoChecklistBadge'
 import { KpiCard, Painel } from '../components/ui/Card'
+import { Carregando, ErroCarga } from '../components/ui/EstadoCarga'
 import { useFiltros } from '../contexts/FiltrosContext'
-import type { ClienteEnriquecido, Juridico as JuridicoTipo } from '../models/types'
-import { clienteRepository, juridicoRepository } from '../repositories'
+import { consultas } from '../consultas'
 import { formatarData, formatarMoeda, formatarMoedaCompacta, formatarPercentual } from '../utils/formatters'
 
 export default function Juridico() {
   const { filtros, carregando: carregandoFiltros } = useFiltros()
-  const [clientes, setClientes] = useState<ClienteEnriquecido[]>([])
-  const [dadosJuridico, setDadosJuridico] = useState<Map<string, JuridicoTipo>>(new Map())
-  const [carregando, setCarregando] = useState(true)
-
-  const carregar = useCallback(() => {
-    setCarregando(true)
-    return Promise.all([clienteRepository.listarEnriquecidos({ ...filtros, status: 'JURIDICO' }), juridicoRepository.listarTodos()]).then(([lista, juridico]) => {
-      setClientes(lista)
-      setDadosJuridico(new Map(juridico.map((j) => [j.clienteId, j])))
-      setCarregando(false)
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtros])
-
-  useEffect(() => {
-    if (carregandoFiltros) return
-    carregar()
-  }, [carregandoFiltros, carregar])
+  const qClientes = useQuery({ ...consultas.clientesEnriquecidos({ ...filtros, status: 'JURIDICO' }), enabled: !carregandoFiltros })
+  const qJuridico = useQuery(consultas.juridico())
+  const clientes = qClientes.data ?? []
+  const dadosJuridico = useMemo(() => new Map((qJuridico.data ?? []).map((j) => [j.clienteId, j])), [qJuridico.data])
+  const carregando = qClientes.isPending || qJuridico.isPending
+  const erro = qClientes.error ?? qJuridico.error
 
   const riscoEnviado = clientes.reduce((s, c) => s + (c.snapshotAtual?.vencidoOficial ?? 0), 0)
   const valorRecuperado = clientes.reduce((s, c) => s + (dadosJuridico.get(c.id)?.valorRecuperado ?? 0), 0)
@@ -52,11 +41,13 @@ export default function Juridico() {
             {clientes.length} cliente(s) em cobrança judicial/extrajudicial
           </p>
         </div>
-        <BotaoModoRevisao clientes={clientes} statusAtual="JURIDICO" aoConcluir={carregar} />
+        <BotaoModoRevisao clientes={clientes} statusAtual="JURIDICO" />
       </div>
 
-      {carregando ? (
-        <p className="text-sm text-gray-500">Carregando…</p>
+      {erro ? (
+        <ErroCarga erro={erro} aoTentarDeNovo={() => void Promise.all([qClientes.refetch(), qJuridico.refetch()])} />
+      ) : carregando ? (
+        <Carregando />
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -84,14 +75,15 @@ export default function Juridico() {
             <ClientesTabela
               clientes={clientes}
               mostrarStatus={false}
+              semColunas={['grupo', 'plataforma', 'prioridade']}
               colunasExtras={[
                 { header: 'Envio ao jurídico', render: (c) => formatarData(dadosJuridico.get(c.id)?.dataEnvio) },
-                { header: 'Motivo', render: (c) => <span className="text-xs">{dadosJuridico.get(c.id)?.motivo}</span> },
-                { header: 'Medida adotada', render: (c) => <span className="text-xs">{dadosJuridico.get(c.id)?.medidaAdotada}</span> },
-                { header: 'Responsável jurídico', render: (c) => dadosJuridico.get(c.id)?.responsavelJuridico },
-                { header: 'Recuperado', alinhamento: 'right', render: (c) => formatarMoeda(dadosJuridico.get(c.id)?.valorRecuperado ?? 0) },
-                { header: 'Saldo', alinhamento: 'right', render: (c) => formatarMoeda(dadosJuridico.get(c.id)?.saldo ?? 0) },
-                { header: 'Próximo passo', render: (c) => <span className="text-xs">{dadosJuridico.get(c.id)?.proximoPasso}</span> },
+                { header: 'Motivo', ocultar: 'xl', render: (c) => <span className="text-xs">{dadosJuridico.get(c.id)?.motivo}</span> },
+                { header: 'Medida adotada', ocultar: 'xl', render: (c) => <span className="text-xs">{dadosJuridico.get(c.id)?.medidaAdotada}</span> },
+                { header: 'Responsável jurídico', ocultar: 'lg', render: (c) => dadosJuridico.get(c.id)?.responsavelJuridico },
+                { header: 'Recuperado', alinhamento: 'right', render: (c) => (dadosJuridico.get(c.id) ? formatarMoeda(dadosJuridico.get(c.id)!.valorRecuperado) : '—') },
+                { header: 'Saldo', alinhamento: 'right', render: (c) => (dadosJuridico.get(c.id) ? formatarMoeda(dadosJuridico.get(c.id)!.saldo) : '—') },
+                { header: 'Próximo passo', ocultar: 'xl', render: (c) => <span className="text-xs">{dadosJuridico.get(c.id)?.proximoPasso}</span> },
                 { header: 'Prazo', render: (c) => formatarData(dadosJuridico.get(c.id)?.prazo) },
                 { header: 'Checklist', render: (c) => <ResumoChecklistBadge clienteId={c.id} semanaRef={filtros.semanaRef ?? c.snapshotAtual?.semanaRef ?? null} /> },
               ]}

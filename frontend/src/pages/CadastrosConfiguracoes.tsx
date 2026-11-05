@@ -1,98 +1,129 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { esquemaValorRegra } from '@monitoramento/dominio'
 import { Painel } from '../components/ui/Card'
-import type { Carteira, ConfiguracaoAlerta, Gerente, GrupoEconomico, Plataforma, RegraClassificacao } from '../models/types'
+import { TabelaResponsiva } from '../components/ui/TabelaResponsiva'
+import { Carregando, ErroCarga } from '../components/ui/EstadoCarga'
 import { cadastrosRepository, configRepository } from '../repositories'
+import { consultas, invalidar } from '../consultas'
 import { useSessao } from '../contexts/SessaoContext'
-import { useFiltros } from '../contexts/FiltrosContext'
 import { ErroApi } from '../api/cliente'
+
+/** Mesmo limite numérico que a API aplica (dominio/esquemas). */
+const esquemaNumeroCampo = z.object({ valor: z.coerce.number({ message: 'Informe um número.' }).pipe(esquemaValorRegra.shape.valor) })
+type CampoNumero = z.input<typeof esquemaNumeroCampo>
+
+/** Campo numérico que grava ao sair (onBlur), validado pelo esquema
+ * compartilhado; erro do servidor aparece no campo e o valor volta ao gravado. */
+function CampoNumericoGravado({
+  valor,
+  rotulo,
+  desabilitado,
+  className,
+  aoGravar,
+}: {
+  valor: number
+  rotulo: string
+  desabilitado: boolean
+  className: string
+  aoGravar: (n: number) => Promise<void>
+}) {
+  const [erroServidor, setErroServidor] = useState<string | null>(null)
+  const [salvando, setSalvando] = useState(false)
+  const { register, handleSubmit, formState, reset } = useForm<CampoNumero>({ resolver: zodResolver(esquemaNumeroCampo), values: { valor } })
+  const enviar = handleSubmit(async ({ valor: novo }) => {
+    const n = Number(novo)
+    if (n === valor) return
+    setSalvando(true)
+    setErroServidor(null)
+    try {
+      await aoGravar(n)
+    } catch (e) {
+      setErroServidor(e instanceof ErroApi ? e.message : 'Não foi possível gravar a alteração.')
+      reset({ valor })
+    } finally {
+      setSalvando(false)
+    }
+  })
+  const erro = formState.errors.valor?.message ?? erroServidor
+  return (
+    <>
+      <input
+        aria-label={rotulo}
+        aria-invalid={Boolean(erro)}
+        disabled={desabilitado}
+        type="number"
+        min={0}
+        step="any"
+        inputMode="decimal"
+        {...register('valor', { onBlur: () => void enviar() })}
+        className={className}
+        style={{ borderColor: 'var(--cor-borda)' }}
+      />
+      {salvando && <span className="text-xs text-[color:var(--cor-texto-secundario)]">salvando…</span>}
+      {erro && (
+        <p role="alert" className="mt-1 w-full basis-full text-xs font-medium" style={{ color: 'var(--cor-critico)' }}>
+          {erro}
+        </p>
+      )}
+    </>
+  )
+}
 
 export default function CadastrosConfiguracoes() {
   const ehAdmin = useSessao().pode('admin')
-  const [grupos, setGrupos] = useState<GrupoEconomico[]>([])
-  const [gerentes, setGerentes] = useState<Gerente[]>([])
-  const [plataformas, setPlataformas] = useState<Plataforma[]>([])
-  const [configs, setConfigs] = useState<ConfiguracaoAlerta[]>([])
-  const [regras, setRegras] = useState<RegraClassificacao[]>([])
-  const [carteiras, setCarteiras] = useState<Carteira[]>([])
-  const { recarregarDados } = useFiltros()
+  const clienteConsultas = useQueryClient()
+  const qGrupos = useQuery(consultas.grupos())
+  const qGerentes = useQuery(consultas.gerentes())
+  const qPlataformas = useQuery(consultas.plataformas())
+  const qConfigs = useQuery(consultas.configuracoesAlerta())
+  const qRegras = useQuery(consultas.regras())
+  const qCarteiras = useQuery(consultas.carteiras())
+  const todas = [qGrupos, qGerentes, qPlataformas, qConfigs, qRegras, qCarteiras]
+  const grupos = qGrupos.data ?? []
+  const gerentes = qGerentes.data ?? []
+  const plataformas = qPlataformas.data ?? []
+  const configs = qConfigs.data ?? []
+  const regras = qRegras.data ?? []
+  const carteiras = qCarteiras.data ?? []
   const [erro, setErro] = useState<{ chave: string; texto: string } | null>(null)
-  // Muda quando uma gravação falha: recria os campos com o valor do servidor.
-  const [versaoCampos, setVersaoCampos] = useState(0)
-  const [carregando, setCarregando] = useState(true)
-  const [salvando, setSalvando] = useState<string | null>(null)
 
-  async function carregar() {
-    const [g, ge, p, c, r, ca] = await Promise.all([
-      cadastrosRepository.listarGrupos(),
-      cadastrosRepository.listarGerentes(),
-      cadastrosRepository.listarPlataformas(),
-      configRepository.listarConfiguracoesAlerta(),
-      configRepository.listarRegras(),
-      cadastrosRepository.listarCarteiras(),
-    ])
-    setRegras(r)
-    setCarteiras(ca)
-    setGrupos(g)
-    setGerentes(ge)
-    setPlataformas(p)
-    setConfigs(c)
-    setCarregando(false)
-  }
-
-  useEffect(() => {
-    carregar()
-  }, [])
-
-  /** Toda gravação passa por aqui: erro do servidor (ex.: limiar incoerente)
-   * aparece na tela e o campo volta ao valor gravado — nada falha em silêncio. */
-  async function gravar(chave: string, acao: () => Promise<void>, aplicar: () => void) {
-    setSalvando(chave)
-    setErro(null)
-    try {
-      await acao()
-      aplicar()
-    } catch (e) {
-      setErro({ chave, texto: e instanceof ErroApi ? e.message : 'Não foi possível gravar a alteração.' })
-      setVersaoCampos((v) => v + 1)
-    } finally {
-      setSalvando(null)
-    }
-  }
-
-  const atualizarLimiar = (id: string, limiar: number) =>
-    gravar(id, () => configRepository.atualizarConfiguracaoAlerta(id, { limiar }), () => setConfigs((atual) => atual.map((c) => (c.id === id ? { ...c, limiar } : c))))
-
-  const alternarAtivo = (id: string, ativo: boolean) =>
-    gravar(id, () => configRepository.atualizarConfiguracaoAlerta(id, { ativo }), () => setConfigs((atual) => atual.map((c) => (c.id === id ? { ...c, ativo } : c))))
-
-  const atualizarRegra = (chave: string, valor: number) => {
-    if (!Number.isFinite(valor) || valor < 0) {
-      setErro({ chave, texto: 'Informe um número maior ou igual a zero.' })
-      setVersaoCampos((v) => v + 1)
-      return
-    }
-    return gravar(chave, () => configRepository.atualizarRegra(chave, valor), () => setRegras((atual) => atual.map((r) => (r.chave === chave ? { ...r, valor } : r))))
-  }
-
+  /** Liga/desliga (checkbox): erro do servidor aparece junto do item. */
+  const alternar = useMutation({
+    mutationFn: async (p: { chave: string; acao: () => Promise<void>; grupos: ('config' | 'carteira')[] }) => {
+      await p.acao()
+      return p
+    },
+    onMutate: () => setErro(null),
+    onSuccess: (p) => invalidar(clienteConsultas, ...p.grupos),
+    onError: (e, p) => setErro({ chave: p.chave, texto: e instanceof ErroApi ? e.message : 'Não foi possível gravar a alteração.' }),
+  })
+  const alternarAtivo = (id: string, ativo: boolean) => alternar.mutate({ chave: id, acao: () => configRepository.atualizarConfiguracaoAlerta(id, { ativo }), grupos: ['config'] })
   const alternarApartada = (id: string, apartada: boolean) =>
-    gravar(
-      id,
-      () => cadastrosRepository.definirCarteiraApartada(id, apartada),
-      () => {
-        setCarteiras((atual) => atual.map((c) => (c.id === id ? { ...c, apartada } : c)))
-        recarregarDados()
-      },
-    )
+    alternar.mutate({ chave: id, acao: () => cadastrosRepository.definirCarteiraApartada(id, apartada), grupos: ['config', 'carteira'] })
+  const gravarLimiar = async (id: string, limiar: number) => {
+    await configRepository.atualizarConfiguracaoAlerta(id, { limiar })
+    await invalidar(clienteConsultas, 'config')
+  }
+  const gravarRegra = async (chave: string, valor: number) => {
+    await configRepository.atualizarRegra(chave, valor)
+    await invalidar(clienteConsultas, 'config')
+  }
 
   const gruposRegra = [...new Set(regras.map((r) => r.grupo))]
 
-  if (carregando) return <p className="text-sm text-gray-500">Carregando…</p>
+  const erroCarga = todas.find((q) => q.error)?.error
+  if (erroCarga) return <ErroCarga erro={erroCarga} aoTentarDeNovo={() => void Promise.all(todas.map((q) => q.refetch()))} />
+  if (todas.some((q) => q.isPending)) return <Carregando />
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="fonte-editorial text-2xl font-semibold" style={{ color: 'var(--cor-primaria)' }}>
-          Cadastros e Configurações
+          Parâmetros
         </h1>
         <p className="text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
           Regras e limiares de alerta são configuráveis aqui — nunca fixos no código do sistema.
@@ -101,46 +132,46 @@ export default function CadastrosConfiguracoes() {
 
 
       <Painel titulo="Limiares de alerta">
-        <div className="overflow-x-auto rounded-lg border" style={{ borderColor: 'var(--cor-borda)' }}>
-          <table className="w-full text-sm">
-            <thead className="border-b text-[12.5px] font-medium" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda-forte)' }}>
-              <tr>
-                <th className="px-3 py-2 text-left">Alerta</th>
-                <th className="px-3 py-2 text-left">Limiar</th>
-                <th className="px-3 py-2 text-left">Gravidade sugerida</th>
-                <th className="px-3 py-2 text-left">Ativo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {configs.map((c) => (
-                <tr key={c.id} className="border-t" style={{ borderColor: 'var(--cor-borda)' }}>
-                  <td className="px-3 py-2">{c.descricao}</td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-1">
-                      <input
-                        key={`${c.id}-${c.limiar}-${versaoCampos}`}
-                        aria-label={`Limiar: ${c.descricao}`}
-                        disabled={!ehAdmin}
-                        type="number"
-                        defaultValue={c.limiar}
-                        onBlur={(e) => atualizarLimiar(c.id, Number(e.target.value))}
+          <TabelaResponsiva<(typeof configs)[number]>
+            rotulo="Limiares de alerta"
+            linhas={configs}
+            chave={(c) => c.id}
+            colunas={[
+              { chave: 'alerta', titulo: 'Alerta', principal: true, classe: 'min-w-[180px]', render: (c) => c.descricao },
+              {
+                chave: 'limiar',
+                titulo: 'Limiar',
+                render: (c) => (
+                  <>
+                    <span className="flex items-center gap-1">
+                      <CampoNumericoGravado
+                        valor={c.limiar}
+                        rotulo={`Limiar: ${c.descricao}`}
+                        desabilitado={!ehAdmin}
                         className="w-24 rounded-md border px-2 py-1 text-sm"
-                        style={{ borderColor: 'var(--cor-borda)' }}
+                        aoGravar={(n) => gravarLimiar(c.id, n)}
                       />
-                      <span className="text-xs text-gray-500">{c.unidade}</span>
-                      {salvando === c.id && <span className="text-xs text-gray-400">salvando…</span>}
-                    </div>
+                      <span className="text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
+                        {c.unidade}
+                      </span>
+                    </span>
                     <ErroCampo erro={erro} chave={c.id} />
-                  </td>
-                  <td className="px-3 py-2 text-xs font-semibold">{c.gravidadeSugerida}</td>
-                  <td className="px-3 py-2">
-                    <input type="checkbox" disabled={!ehAdmin} checked={c.ativo} onChange={(e) => alternarAtivo(c.id, e.target.checked)} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </>
+                ),
+              },
+              { chave: 'gravidade', titulo: 'Gravidade sugerida', classe: 'text-xs font-semibold', render: (c) => c.gravidadeSugerida },
+              {
+                chave: 'ativo',
+                titulo: 'Ativo',
+                render: (c) => (
+                  <label className="inline-flex min-h-[40px] items-center gap-2 text-xs">
+                    <input type="checkbox" className="h-4 w-4" disabled={!ehAdmin} checked={c.ativo} onChange={(e) => alternarAtivo(c.id, e.target.checked)} aria-label={`Ativo: ${c.descricao}`} />
+                    <span className="md:sr-only">{c.ativo ? 'Ligado' : 'Desligado'}</span>
+                  </label>
+                ),
+              },
+            ]}
+          />
       </Painel>
 
       <Painel titulo="Regras da classificação semanal e avisos de qualidade da importação">
@@ -162,21 +193,15 @@ export default function CadastrosConfiguracoes() {
                     <label key={r.chave} className="flex flex-col gap-1 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                       <span className="min-w-0">{r.descricao}</span>
                       <span className="flex shrink-0 items-center gap-1">
-                        <input
-                          key={`${r.chave}-${r.valor}-${versaoCampos}`}
-                          disabled={!ehAdmin}
-                          type="number"
-                          min={0}
-                          step="any"
-                          defaultValue={r.valor}
-                          onBlur={(e) => Number(e.target.value) !== r.valor && atualizarRegra(r.chave, Number(e.target.value))}
+                        <CampoNumericoGravado
+                          valor={r.valor}
+                          rotulo={r.descricao}
+                          desabilitado={!ehAdmin}
                           className="w-32 rounded-md border px-2 py-1 text-right text-sm"
-                          style={{ borderColor: 'var(--cor-borda)' }}
+                          aoGravar={(n) => gravarRegra(r.chave, n)}
                         />
-                        <span className="w-8 text-xs text-gray-500">{r.unidade}</span>
-                        {salvando === r.chave && <span className="text-xs text-gray-400">salvando…</span>}
+                        <span className="w-8 text-xs text-[color:var(--cor-texto-secundario)]">{r.unidade}</span>
                       </span>
-                      <ErroCampo erro={erro} chave={r.chave} />
                     </label>
                   ))}
               </div>
@@ -203,7 +228,7 @@ export default function CadastrosConfiguracoes() {
         </ul>
       </Painel>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
         <Painel titulo={`Grupos econômicos (${grupos.length})`}>
           <ul className="max-h-64 overflow-y-auto text-sm">
             {grupos.map((g) => (

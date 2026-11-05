@@ -8,6 +8,8 @@ import type { Dependencias } from '../composicao'
 import { registrarSessao } from './autenticacao'
 import { criarTratadorDeErros, ErroHttp } from './erros'
 import { rotasArquivos } from './rotas/arquivos'
+import { rotasFotoBitfin } from './rotas/fotoBitfin'
+import { rotasMapaGarantias } from './rotas/mapaGarantias'
 import { rotasAutenticacao } from './rotas/autenticacao'
 import { rotasNegocio } from './rotas/negocio'
 import { rotasSaude } from './rotas/saude'
@@ -67,5 +69,7 @@ export async function construirServidor(deps: Dependencias, opcoes: { log?: bool
   await app.register(async (escopo) => rotasAutenticacao(escopo, deps))
   await app.register(async (escopo) => rotasNegocio(escopo, deps))
   await app.register(async (escopo) => rotasArquivos(escopo, deps))
+  await app.register(async (escopo) => rotasFotoBitfin(escopo, deps))
+  await app.register(async (escopo) => rotasMapaGarantias(escopo, deps))
   return app
 }

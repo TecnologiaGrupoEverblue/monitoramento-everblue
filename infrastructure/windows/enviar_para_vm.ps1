@@ -83,7 +83,9 @@ Ok 'pacote copiado e conferido na VM'
 if ($Instalar -or $Atualizar) {
   $roteiro = if ($Instalar) { 'instalar.sh' } else { 'atualizar.sh' }
   Passo "Abrindo a sessão e rodando $roteiro (responda às perguntas na tela)"
-  & ssh -t -p $Porta $alvo "cd $destino && bash $roteiro $($pacote.Name)"
+  # sudo: o .env, a chave do certificado e o Docker são do root (o everblue não
+  # entra no grupo docker de propósito).
+  & ssh -t -p $Porta $alvo "cd $destino && sudo bash $roteiro $($pacote.Name)"
   exit $LASTEXITCODE
 }
 

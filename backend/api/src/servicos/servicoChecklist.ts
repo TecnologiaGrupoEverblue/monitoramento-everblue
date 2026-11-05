@@ -16,6 +16,7 @@ import type { PlanoAcaoRepositorio } from '../repositorios/planoAcaoRepositorio'
 import type { SnapshotRepositorio } from '../repositorios/snapshotRepositorio'
 import type { RestritivoRepositorio } from '../repositorios/restritivoRepositorio'
 import type { ServicoCarteira } from './servicoCarteira'
+import type { FotoRepositorio } from '../repositorios/fotoRepositorio'
 
 export class ServicoChecklist {
   constructor(
@@ -27,6 +28,7 @@ export class ServicoChecklist {
     private readonly checklist: ChecklistRepositorio,
     private readonly servicoCarteira: ServicoCarteira,
     private readonly restritivos: RestritivoRepositorio,
+    private readonly fotos?: FotoRepositorio,
   ) {}
 
   async obter(clienteId: string, semanaRef: string): Promise<ItemChecklistView[]> {
@@ -41,6 +43,8 @@ export class ServicoChecklist {
       this.servicoCarteira.analiseTransacional(clienteId),
       this.restritivos.atualEAnterior([clienteId], semanaRef),
     ])
+    // 1.2: eventos da semana e limite vêm da foto do Bitfin (até a data da semana).
+    const bitfin = this.fotos ? await this.fotos.ultimoDetalheDoCliente(clienteId, semanaRef) : undefined
     if (!cliente) return []
 
     const indiceAtual = serieCompleta.findIndex((s) => s.semanaRef === semanaRef)
@@ -64,6 +68,20 @@ export class ServicoChecklist {
         const r = restritivos.get(clienteId)
         return r?.atual ? { atual: r.atual.linhas, anterior: r.anterior?.linhas ?? null } : undefined
       })(),
+      ...(bitfin === undefined
+        ? {}
+        : {
+            bitfin: bitfin
+              ? {
+                  tiradaEm: bitfin.tiradaEm,
+                  eventos: bitfin.detalhe.eventos,
+                  limite: { total: bitfin.detalhe.limite.total, origem: bitfin.detalhe.limite.origem, validade: bitfin.detalhe.limite.validade },
+                  // Foto anterior sem o campo: undefined mantém o cálculo antigo.
+                  aging: 'aging' in bitfin.detalhe ? (bitfin.detalhe.aging ?? null) : undefined,
+                  manifesto: bitfin.detalhe.manifesto ? { baseRisco: bitfin.detalhe.manifesto.baseRisco, contas: bitfin.detalhe.manifesto.contas } : undefined,
+                }
+              : null,
+          }),
     })
     const salvosPorItem = new Map(salvos.map((s) => [s.item, s]))
     return sugestoes.map((sugestao) => {

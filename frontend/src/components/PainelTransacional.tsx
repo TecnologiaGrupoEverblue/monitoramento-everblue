@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ptBR } from 'date-fns/locale'
 import { format } from 'date-fns'
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { movimentoContaRepository } from '../repositories'
-import type { AnaliseTransacional } from '../regras/motorTransacional'
+import { consultas } from '../consultas'
+import { ErroCarga } from './ui/EstadoCarga'
 import { gravidadeCor } from '../theme/colors'
 import { formatarMoeda, formatarMoedaCompacta } from '../utils/formatters'
 import { GravidadeBadge } from './ui/Badges'
@@ -55,21 +55,12 @@ function StatComparativo({
  * cliente ainda movimenta a conta com regularidade, comparando os últimos
  * 3 meses contra os 3 anteriores e sinalizando pagamentos fora do padrão. */
 export default function PainelTransacional({ clienteId }: { clienteId: string }) {
-  const [analise, setAnalise] = useState<AnaliseTransacional | null | undefined>(undefined)
+  const q = useQuery(consultas.movimentos(clienteId))
+  const analise = q.data
 
-  useEffect(() => {
-    let ativo = true
-    setAnalise(undefined)
-    movimentoContaRepository.analise(clienteId).then((a) => {
-      if (ativo) setAnalise(a)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [clienteId])
-
-  if (analise === undefined) return <p className="text-xs text-gray-400">Carregando análise transacional…</p>
-  if (analise === null) return <p className="text-xs text-gray-400">Sem movimento de conta registrado para este cliente.</p>
+  if (q.isError) return <ErroCarga titulo="Não foi possível carregar a análise transacional." erro={q.error} aoTentarDeNovo={() => void q.refetch()} />
+  if (analise === undefined) return <p className="text-xs text-[color:var(--cor-texto-secundario)]">Carregando análise transacional…</p>
+  if (analise === null) return <p className="text-xs text-[color:var(--cor-texto-secundario)]">Sem movimento de conta registrado para este cliente.</p>
 
   const dadosGrafico = analise.meses.map((m) => ({
     mes: mesLabel(m.mesRef),

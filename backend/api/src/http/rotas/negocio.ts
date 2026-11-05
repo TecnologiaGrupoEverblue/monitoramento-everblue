@@ -3,11 +3,26 @@
  * decisões, checklist e importação exigem `analista`; configuração exige
  * `admin`. Toda entrada é validada por esquema antes de chegar ao caso de uso.
  */
-import { ITENS_CHECKLIST, DIMENSOES_RISCO, REGRAS_CLASSIFICACAO_PADRAO, TIPOS_RESTRITIVO, validarNovoLimiar, type ChaveRegra, type FiltrosGlobais } from '@monitoramento/dominio'
+import {
+  ITENS_CHECKLIST,
+  DIMENSOES_RISCO,
+  REGRAS_CLASSIFICACAO_PADRAO,
+  CHAVES_CHECKLIST,
+  esquemaAndamentoPlano,
+  esquemaCarteiraApartada,
+  esquemaDecisaoComite,
+  esquemaItemChecklist,
+  esquemaLimiarAlerta,
+  esquemaRestritivos,
+  esquemaValorRegra,
+  validarNovoLimiar,
+  type ChaveRegra,
+  type FiltrosGlobais,
+} from '@monitoramento/dominio'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { Dependencias } from '../../composicao'
-import { exigir } from '../autenticacao'
+import { exigir, exigirGestao } from '../autenticacao'
 import { ErroHttp } from '../erros'
 
 const data = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'data no formato yyyy-MM-dd')
@@ -21,7 +36,7 @@ const esquemaFiltros = z.object({
   clienteId: id.optional(),
   grupoEconomicoId: id.optional(),
   carteiraId: id.optional(),
-  status: z.enum(['NORMAL', 'MONITORAMENTO', 'SAIDA_DE_RISCO', 'JURIDICO']).optional(),
+  status: z.enum(['NORMAL', 'MONITORAMENTO', 'SAIDA_DE_RISCO', 'RECUPERACAO_DE_CREDITO', 'JURIDICO']).optional(),
   prioridade: z.enum(['BAIXA', 'MEDIA', 'ALTA']).optional(),
   setor: textoCurto.optional(),
   ramoAtividade: textoCurto.optional(),
@@ -38,7 +53,9 @@ const paramCliente = z.object({ clienteId: id })
 export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Promise<void> {
   const leitor = { preHandler: exigir(deps, 'leitor') }
   const analista = { preHandler: exigir(deps, 'analista') }
-  const admin = { preHandler: exigir(deps, 'admin') }
+  // Parâmetros: área de gestão (Administrador, Diretoria, Gerente na Intranet).
+  const leitorGestao = { preHandler: exigirGestao(deps, 'leitor') }
+  const adminGestao = { preHandler: exigirGestao(deps, 'admin') }
   const { repos, servicos } = deps
 
   // ------------------------------------------------------------ cadastros
@@ -46,9 +63,9 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   app.get('/api/v1/cadastros/gerentes', leitor, () => repos.cadastros.listarGerentes())
   app.get('/api/v1/cadastros/plataformas', leitor, () => repos.cadastros.listarPlataformas())
   app.get('/api/v1/cadastros/carteiras', leitor, () => repos.cadastros.listarCarteiras())
-  app.patch('/api/v1/cadastros/carteiras/:carteiraId', admin, async (request, reply) => {
+  app.patch('/api/v1/cadastros/carteiras/:carteiraId', adminGestao, async (request, reply) => {
     const { carteiraId } = z.object({ carteiraId: id }).parse(request.params)
-    const { apartada, motivo } = z.object({ apartada: z.boolean(), motivo: textoCurto.optional() }).strict().parse(request.body)
+    const { apartada, motivo } = esquemaCarteiraApartada.parse(request.body)
     const anterior = (await repos.cadastros.listarCarteiras()).find((c) => c.id === carteiraId)
     if (!anterior || !(await repos.cadastros.definirCarteiraApartada(carteiraId, apartada))) throw new ErroHttp(404, 'Carteira não encontrada.', 'nao_encontrado')
     await repos.auditoria.registrar({
@@ -95,41 +112,15 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   app.get('/api/v1/planos/cliente/:clienteId', leitor, (request) => repos.planos.porCliente(paramCliente.parse(request.params).clienteId))
   app.patch('/api/v1/planos/:planoId', analista, (request) => {
     const { planoId } = z.object({ planoId: id }).parse(request.params)
-    const corpo = z
-      .object({
-        oQueFoiFeito: z.string().trim().max(4000).nullable().optional(),
-        oQueNaoFoiFeito: z.string().trim().max(4000).nullable().optional(),
-        concluir: z.boolean().optional(),
-        reabrir: z.boolean().optional(),
-        dataLimite: data.optional(),
-        responsavel: z.string().trim().min(1).max(200).optional(),
-        justificativa: z.string().trim().max(1000).optional(),
-      })
-      .strict()
-      .parse(request.body)
+    const corpo = esquemaAndamentoPlano.parse(request.body)
     return servicos.planos.registrarAndamento(planoId, corpo, request.ator!)
   })
 
   // ------------------------------------------------------------ restritivos e classificação
-  const tiposRestritivo = TIPOS_RESTRITIVO.map((t) => t.tipo) as [string, ...string[]]
   app.get('/api/v1/restritivos/cliente/:clienteId', leitor, (request) => repos.restritivos.porCliente(paramCliente.parse(request.params).clienteId))
   app.put('/api/v1/restritivos/:clienteId/:semanaRef', analista, (request) => {
     const p = z.object({ clienteId: id, semanaRef: data }).parse(request.params)
-    const { linhas } = z
-      .object({
-        linhas: z
-          .array(
-            z.object({
-              tipo: z.enum(tiposRestritivo),
-              quantidade: z.number().int().min(0).max(1_000_000),
-              valor: z.number().finite().min(0).max(1e13),
-              observacao: z.string().trim().max(500).nullable().optional(),
-            }),
-          )
-          .max(tiposRestritivo.length),
-      })
-      .strict()
-      .parse(request.body)
+    const { linhas } = esquemaRestritivos.parse(request.body)
     return servicos.restritivos.gravar(p.clienteId, p.semanaRef, linhas as never, request.ator!)
   })
   app.get('/api/v1/classificacoes/cliente/:clienteId', leitor, (request) => repos.classificacoes.porCliente(paramCliente.parse(request.params).clienteId))
@@ -165,21 +156,13 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   })
 
   // ------------------------------------------------------------ checklist
-  const chavesChecklist = ITENS_CHECKLIST.map((i) => i.chave) as [string, ...string[]]
   app.get('/api/v1/checklist/:clienteId/:semanaRef', leitor, (request) => {
     const p = z.object({ clienteId: id, semanaRef: data }).parse(request.params)
     return servicos.checklist.obter(p.clienteId, p.semanaRef)
   })
   app.put('/api/v1/checklist/:clienteId/:semanaRef/:item', analista, async (request, reply) => {
-    const p = z.object({ clienteId: id, semanaRef: data, item: z.enum(chavesChecklist) }).parse(request.params)
-    const corpo = z
-      .object({
-        parecer: z.string().max(10_000).optional(),
-        gravidade: z.enum(['VERDE', 'AMARELO', 'VERMELHO']).optional(),
-        gravidadeManual: z.boolean().optional(),
-      })
-      .strict()
-      .parse(request.body)
+    const p = z.object({ clienteId: id, semanaRef: data, item: z.enum(CHAVES_CHECKLIST) }).parse(request.params)
+    const corpo = esquemaItemChecklist.parse(request.body)
     if (!(await repos.clientes.porId(p.clienteId))) throw new ErroHttp(404, 'Cliente não encontrado.', 'nao_encontrado')
     await servicos.checklist.salvarItem(p.clienteId, p.semanaRef, p.item as (typeof ITENS_CHECKLIST)[number]['chave'], corpo, request.ator!.nome)
     return reply.status(204).send()
@@ -205,28 +188,15 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
     return ata
   })
   app.post('/api/v1/comites/decisoes', analista, (request) => {
-    const corpo = z
-      .object({
-        clienteId: id,
-        decisao: z.string().trim().min(1).max(2000),
-        plano: z.string().trim().max(4000).default(''),
-        prazo: data,
-        responsavel: z.string().trim().max(200).default(''),
-      })
-      .strict()
-      .parse(request.body)
+    const corpo = esquemaDecisaoComite.parse(request.body)
     return servicos.decisao.registrar(corpo, request.ator!)
   })
 
   // ------------------------------------------------------------ configurações
-  app.get('/api/v1/configuracoes/alertas', leitor, () => repos.configuracoes.listarAlertas())
-  app.patch('/api/v1/configuracoes/alertas/:configId', admin, async (request, reply) => {
+  app.get('/api/v1/configuracoes/alertas', leitorGestao, () => repos.configuracoes.listarAlertas())
+  app.patch('/api/v1/configuracoes/alertas/:configId', adminGestao, async (request, reply) => {
     const { configId } = z.object({ configId: id }).parse(request.params)
-    const corpo = z
-      .object({ limiar: z.number().finite().min(0).max(1e12).optional(), ativo: z.boolean().optional(), motivo: textoCurto.optional() })
-      .strict()
-      .refine((c) => c.limiar !== undefined || c.ativo !== undefined, 'informe limiar ou ativo')
-      .parse(request.body)
+    const corpo = esquemaLimiarAlerta.parse(request.body)
     const { motivo, ...alteracoes } = corpo
     const anterior = (await repos.configuracoes.listarAlertas()).find((c) => c.id === configId)
     if (!anterior || !(await repos.configuracoes.atualizarAlerta(configId, alteracoes))) throw new ErroHttp(404, 'Configuração não encontrada.', 'nao_encontrado')
@@ -243,10 +213,10 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   })
 
   const chavesRegra = REGRAS_CLASSIFICACAO_PADRAO.map((r) => r.chave) as [string, ...string[]]
-  app.get('/api/v1/configuracoes/regras', leitor, () => repos.classificacoes.listarRegras())
-  app.patch('/api/v1/configuracoes/regras/:chave', admin, async (request, reply) => {
+  app.get('/api/v1/configuracoes/regras', leitorGestao, () => repos.classificacoes.listarRegras())
+  app.patch('/api/v1/configuracoes/regras/:chave', adminGestao, async (request, reply) => {
     const { chave } = z.object({ chave: z.enum(chavesRegra) }).parse(request.params)
-    const { valor, motivo } = z.object({ valor: z.number().finite().min(0).max(1e13), motivo: textoCurto.optional() }).strict().parse(request.body)
+    const { valor, motivo } = esquemaValorRegra.parse(request.body)
     const problema = validarNovoLimiar(chave as ChaveRegra, valor, await repos.classificacoes.listarRegras())
     if (problema) throw new ErroHttp(422, problema, 'limiar_invalido')
     const anterior = await repos.classificacoes.atualizarRegra(chave, valor, request.ator!.nome)
@@ -266,7 +236,14 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
   // ------------------------------------------------------------ importação semanal
   // Importação lê planilha inteira no servidor: limite próprio, bem abaixo do global.
   const limiteImportacao = { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }
-  app.post('/api/v1/importacoes', { ...analista, ...limiteImportacao }, async (request) => {
+  // 1.2: os dados vêm do Bitfin pela foto. A importação por planilha só volta
+  // com IMPORTACAO_PLANILHA_HABILITADA=true no .env (contingência).
+  const planilhaDesligada = async () => {
+    if (!deps.cfg.importacao.planilhaHabilitada) {
+      throw new ErroHttp(410, 'A importação por planilha foi desativada: os dados agora vêm direto do Bitfin (Foto do Bitfin).', 'importacao_desativada')
+    }
+  }
+  app.post('/api/v1/importacoes', { preHandler: [analista.preHandler, planilhaDesligada], ...limiteImportacao }, async (request) => {
     const partes = request.parts()
     let semanaRef: string | null = null
     let arquivo: { nome: string; conteudo: Buffer } | null = null
@@ -287,12 +264,12 @@ export async function rotasNegocio(app: FastifyInstance, deps: Dependencias): Pr
     const ator = request.ator!
     return servicos.importacao.receber({ nomeOriginal: arquivo.nome, conteudo: arquivo.conteudo }, semana, { id: ator.id, nome: ator.nome, email: ator.email })
   })
-  app.post('/api/v1/importacoes/:importacaoId/previa', { ...analista, ...limiteImportacao }, (request) => {
+  app.post('/api/v1/importacoes/:importacaoId/previa', { preHandler: [analista.preHandler, planilhaDesligada], ...limiteImportacao }, (request) => {
     const { importacaoId } = z.object({ importacaoId: z.string().uuid() }).parse(request.params)
     const { semanaRef } = z.object({ semanaRef: data }).strict().parse(request.body)
     return servicos.importacao.previa(importacaoId, semanaRef)
   })
-  app.post('/api/v1/importacoes/:importacaoId/confirmar', { ...analista, ...limiteImportacao }, (request) => {
+  app.post('/api/v1/importacoes/:importacaoId/confirmar', { preHandler: [analista.preHandler, planilhaDesligada], ...limiteImportacao }, (request) => {
     const { importacaoId } = z.object({ importacaoId: z.string().uuid() }).parse(request.params)
     const { semanaRef } = z.object({ semanaRef: data }).strict().parse(request.body)
     const ator = request.ator!

@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { TabelaResponsiva } from '../components/ui/TabelaResponsiva'
+import { NomeCliente } from '../components/ui/NomeCliente'
 import { KpiCard, Painel } from '../components/ui/Card'
 import { StatusPlanoBadge } from '../components/ui/Badges'
 import { BotaoExportar } from '../components/arquivos/BotaoExportar'
 import ModalAndamentoPlano from '../components/comite/ModalAndamentoPlano'
 import { useSessao } from '../contexts/SessaoContext'
 import { useFiltros } from '../contexts/FiltrosContext'
-import type { Cliente, PlanoAcao } from '../models/types'
-import { clienteRepository, planoAcaoRepository } from '../repositories'
+import { Carregando, ErroCarga } from '../components/ui/EstadoCarga'
+import { consultas } from '../consultas'
+import type { PlanoAcao } from '../models/types'
 import { formatarData } from '../utils/formatters'
 
 type FiltroStatus = 'TODOS' | 'ATRASADO' | 'EM_DIA' | 'CONCLUIDO'
@@ -15,28 +19,15 @@ type FiltroStatus = 'TODOS' | 'ATRASADO' | 'EM_DIA' | 'CONCLUIDO'
 export default function PlanosDeAcao() {
   const { filtros, carregando: carregandoFiltros } = useFiltros()
   const navigate = useNavigate()
-  const [planos, setPlanos] = useState<PlanoAcao[]>([])
-  const [clientesPorId, setClientesPorId] = useState<Map<string, Cliente>>(new Map())
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('TODOS')
-  const [carregando, setCarregando] = useState(true)
   const [editando, setEditando] = useState<PlanoAcao | null>(null)
   const podeEditar = useSessao().pode('analista')
-
-  useEffect(() => {
-    if (carregandoFiltros) return
-    let ativo = true
-    setCarregando(true)
-    Promise.all([clienteRepository.listarEnriquecidos(filtros), planoAcaoRepository.listarTodos()]).then(([clientes, todosPlanos]) => {
-      if (!ativo) return
-      const idsPermitidos = new Set(clientes.map((c) => c.id))
-      setPlanos(todosPlanos.filter((p) => idsPermitidos.has(p.clienteId)))
-      setClientesPorId(new Map(clientes.map((c) => [c.id, c])))
-      setCarregando(false)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [filtros, carregandoFiltros])
+  const qClientes = useQuery({ ...consultas.clientesEnriquecidos(filtros), enabled: !carregandoFiltros })
+  const qPlanos = useQuery(consultas.planos())
+  const clientesPorId = useMemo(() => new Map((qClientes.data ?? []).map((c) => [c.id, c])), [qClientes.data])
+  const planos = useMemo(() => (qPlanos.data ?? []).filter((p) => clientesPorId.has(p.clienteId)), [qPlanos.data, clientesPorId])
+  const carregando = qClientes.isPending || qPlanos.isPending
+  const erro = qClientes.error ?? qPlanos.error
 
   const planosFiltrados = useMemo(() => (filtroStatus === 'TODOS' ? planos : planos.filter((p) => p.status === filtroStatus)), [planos, filtroStatus])
   const planosOrdenados = useMemo(() => [...planosFiltrados].sort((a, b) => a.dataLimite.localeCompare(b.dataLimite)), [planosFiltrados])
@@ -68,80 +59,65 @@ export default function PlanosDeAcao() {
       </div>
 
       <Painel>
-        {carregando ? (
-          <p className="p-6 text-sm text-gray-500">Carregando…</p>
+        {erro ? (
+          <ErroCarga erro={erro} aoTentarDeNovo={() => void Promise.all([qClientes.refetch(), qPlanos.refetch()])} />
+        ) : carregando ? (
+          <Carregando />
         ) : planosOrdenados.length === 0 ? (
-          <p className="py-10 text-center text-sm text-gray-400">Nenhum plano de ação para este recorte.</p>
+          <p className="py-10 text-center text-sm text-[color:var(--cor-texto-secundario)]">Nenhum plano de ação para este recorte.</p>
         ) : (
-          <div className="overflow-x-auto border bg-[var(--cor-superficie-solida)]" style={{ borderColor: 'var(--cor-borda)' }}>
-            <table className="w-full text-sm">
-              <thead className="border-b text-[12.5px] font-medium" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda-forte)' }}>
-                <tr>
-                  <th className="px-4 py-2.5 text-left">Cliente</th>
-                  <th className="px-4 py-2.5 text-left">Decisão atual</th>
-                  <th className="px-4 py-2.5 text-left">Plano</th>
-                  <th className="px-4 py-2.5 text-left">Responsável</th>
-                  <th className="px-4 py-2.5 text-left">Prazo</th>
-                  <th className="px-4 py-2.5 text-left">Andamento</th>
-                  <th className="px-4 py-2.5 text-left">Status</th>
-                  {podeEditar && <th className="px-4 py-2.5" />}
-                </tr>
-              </thead>
-              <tbody>
-                {planosOrdenados.map((p) => {
-                  const cliente = clientesPorId.get(p.clienteId)
-                  return (
-                    <tr
-                      key={p.id}
-                      className="cursor-pointer border-t hover:bg-[var(--cor-fundo-recuado)]"
-                      style={{ borderColor: 'var(--cor-borda)', backgroundColor: p.status === 'ATRASADO' ? 'var(--cor-critico-fundo)' : undefined }}
-                      onClick={() => navigate(`/clientes/${p.clienteId}`)}
-                    >
-                      <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--cor-primaria)' }}>
-                        {cliente?.nome ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5">{p.decisaoAtual}</td>
-                      <td className="max-w-xs px-4 py-2.5 text-xs text-gray-600">{p.plano}</td>
-                      <td className="px-4 py-2.5">{p.responsavel}</td>
-                      <td className="px-4 py-2.5">{formatarData(p.dataLimite)}</td>
-                      <td className="max-w-xs px-4 py-2.5 text-xs">
-                        {p.oQueFoiFeito && <p style={{ color: 'var(--cor-normal)' }}>Feito: {p.oQueFoiFeito}</p>}
-                        {p.oQueNaoFoiFeito && <p style={{ color: 'var(--cor-critico)' }}>Não feito: {p.oQueNaoFoiFeito}</p>}
-                        {!p.oQueFoiFeito && !p.oQueNaoFoiFeito && <span style={{ color: 'var(--cor-texto-secundario)' }}>—</span>}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <StatusPlanoBadge status={p.status} />
-                      </td>
-                      {podeEditar && (
-                        <td className="px-4 py-2.5 text-right">
-                          <button
-                            type="button"
-                            className="botao-secundario whitespace-nowrap px-2.5 py-1 text-xs"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setEditando(p)
-                            }}
-                          >
-                            Andamento
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <TabelaResponsiva<PlanoAcao>
+            rotulo="Planos de ação"
+            linhas={planosOrdenados}
+            chave={(p) => p.id}
+            aoClicar={(p) => navigate(`/clientes/${p.clienteId}`)}
+            estiloLinha={(p) => (p.status === 'ATRASADO' ? { backgroundColor: 'var(--cor-critico-fundo)' } : undefined)}
+            colunas={[
+              { chave: 'cliente', titulo: 'Cliente', principal: true, classe: 'font-medium min-w-[160px]', render: (p) => <NomeCliente nome={clientesPorId.get(p.clienteId)?.nome} documento={clientesPorId.get(p.clienteId)?.cnpj} /> },
+              { chave: 'status', titulo: 'Status', render: (p) => <StatusPlanoBadge status={p.status} /> },
+              { chave: 'decisao', titulo: 'Decisão atual', classe: 'min-w-[160px]', render: (p) => p.decisaoAtual },
+              { chave: 'plano', titulo: 'Plano', ocultar: 'xl', classe: 'max-w-xs text-xs', render: (p) => <span style={{ color: 'var(--cor-texto-secundario)' }}>{p.plano || '—'}</span> },
+              { chave: 'responsavel', titulo: 'Responsável', render: (p) => p.responsavel || '—' },
+              { chave: 'prazo', titulo: 'Prazo', classe: 'whitespace-nowrap', render: (p) => formatarData(p.dataLimite) },
+              {
+                chave: 'andamento',
+                titulo: 'Andamento',
+                ocultar: 'lg',
+                classe: 'max-w-xs text-xs',
+                render: (p) =>
+                  p.oQueFoiFeito || p.oQueNaoFoiFeito ? (
+                    <>
+                      {p.oQueFoiFeito && <p style={{ color: 'var(--cor-normal)' }}>Feito: {p.oQueFoiFeito}</p>}
+                      {p.oQueNaoFoiFeito && <p style={{ color: 'var(--cor-critico)' }}>Não feito: {p.oQueNaoFoiFeito}</p>}
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--cor-texto-secundario)' }}>—</span>
+                  ),
+              },
+              ...(podeEditar
+                ? [
+                    {
+                      chave: 'acao',
+                      titulo: 'Registrar andamento',
+                      acao: true,
+                      alinhar: 'right' as const,
+                      render: (p: PlanoAcao) => (
+                        <button type="button" className="botao-secundario min-h-[40px] whitespace-nowrap px-3 text-xs" onClick={() => setEditando(p)}>
+                          Andamento
+                        </button>
+                      ),
+                    },
+                  ]
+                : []),
+            ]}
+          />
         )}
       </Painel>
       {editando && (
         <ModalAndamentoPlano
           plano={editando}
           nomeCliente={clientesPorId.get(editando.clienteId)?.nome}
-          aoFechar={(atualizado) => {
-            setEditando(null)
-            if (atualizado) setPlanos((lista) => lista.map((x) => (x.id === atualizado.id ? atualizado : x)))
-          }}
+          aoFechar={() => setEditando(null)}
         />
       )}
     </div>

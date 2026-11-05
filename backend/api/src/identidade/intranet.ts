@@ -41,6 +41,8 @@ export interface AcessoConfirmado {
   nome: string
   email: string
   cargo: string | null
+  /** Perfil de acesso corporativo (accessLevel). null se a Intranet não enviou. */
+  nivelAcesso: { codigo: string; nome: string } | null
 }
 
 export interface FotoCorporativa {
@@ -72,6 +74,8 @@ export function assinar(segredo: string, e: EntradaAssinatura): string {
 export type ResultadoConsultaIntranet = { ok: true } | { ok: false; motivo: string }
 
 export class ClienteIntranet {
+  /** Só para diagnóstico (testar-intranet): estrutura da última resposta do /me, sem valores pessoais. */
+  ultimaResposta: { chavesRaiz: string[]; chavesUsuario: string[]; accessLevel: unknown } | null = null
   constructor(
     private readonly cfg: Configuracao,
     private readonly relogio: () => number = Date.now,
@@ -202,10 +206,20 @@ export class ClienteIntranet {
       const nome = texto(d.name)
       if (nome) departamento = { externoId: texto(d.id) || null, nome, slug: texto(d.slug) }
     }
+    // Perfil de acesso da Intranet: o `code` é o estável; o `name` só exibe.
+    // Aceita o accessLevel dentro de `user` (formato do /users) ou na raiz da
+    // resposta; como objeto { code, name } ou só o código em texto.
+    let nivelAcesso: { codigo: string; nome: string } | null = null
+    const nivel = usuario.accessLevel ?? corpo.accessLevel
+    const n = nivel && typeof nivel === 'object' ? (nivel as Record<string, unknown>) : { code: nivel }
+    const codigoNivel = texto(n.code).toLowerCase()
+    if (/^[a-z][a-z0-9_]{0,31}$/.test(codigoNivel)) nivelAcesso = { codigo: codigoNivel, nome: texto(n.name).slice(0, 80) || codigoNivel }
+    this.ultimaResposta = { chavesRaiz: Object.keys(corpo).sort(), chavesUsuario: Object.keys(usuario).sort(), accessLevel: nivel ?? null }
     return {
       usuarioExternoId: usuarioId,
       entraOid: oidResposta,
       departamento,
+      nivelAcesso,
       nome: texto(usuario.name),
       email: texto(usuario.email).toLowerCase(),
       cargo: texto(usuario.jobTitle) || null,

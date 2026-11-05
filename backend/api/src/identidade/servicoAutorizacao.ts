@@ -57,6 +57,7 @@ export class ServicoAutorizacao {
       const acesso = await this.intranet.validarAcesso(estado.entraOid)
       const { perfil } = await complementarPeloGraph(this.graph, this.cfg.entra.graphPerfil, estado.entraOid, acesso)
       await this.usuarios.marcarAutorizado(usuarioId, acesso.departamento, perfil)
+      await this.usuarios.gravarNivelAcesso(usuarioId, acesso.nivelAcesso)
     } catch (erro) {
       if (erro instanceof AcessoNegado) {
         await this.usuarios.revogar(usuarioId)

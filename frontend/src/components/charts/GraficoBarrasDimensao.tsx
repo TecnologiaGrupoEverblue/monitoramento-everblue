@@ -24,7 +24,7 @@ export default function GraficoBarrasDimensao({
   const dadosLimitados = dados.slice(0, limite)
 
   if (dadosLimitados.length === 0) {
-    return <p className="py-10 text-center text-sm text-gray-400">Sem dados para o recorte selecionado.</p>
+    return <p className="py-10 text-center text-sm text-[color:var(--cor-texto-secundario)]">Sem dados para o recorte selecionado.</p>
   }
 
   return (
@@ -43,7 +43,7 @@ export default function GraficoBarrasDimensao({
           </>
         )}
         <Tooltip formatter={(valor) => formatarMoedaCompacta(Number(valor))} labelStyle={{ fontWeight: 600 }} />
-        <Bar dataKey="risco" radius={[4, 4, 4, 4]} cursor="pointer" onClick={(d) => onClickBarra(d as unknown as ItemDimensao)}>
+        <Bar dataKey="risco" name="Risco" radius={[4, 4, 4, 4]} cursor="pointer" onClick={(d) => onClickBarra(d as unknown as ItemDimensao)}>
           {dadosLimitados.map((_, i) => (
             <Cell key={i} fill={graficoPaleta[i % graficoPaleta.length]} />
           ))}

@@ -308,6 +308,19 @@ select optgroup {
 }
 .recharts-tooltip-label {
   color: var(--cor-texto-primario) !important;
+  font-weight: 600;
+}
+/* O Recharts pinta o texto de cada item com a cor da série — preto quando a
+   barra tem cor por célula. No tema escuro o texto sempre segue o tema. */
+.recharts-default-tooltip .recharts-tooltip-item,
+.recharts-default-tooltip .recharts-tooltip-item-name,
+.recharts-default-tooltip .recharts-tooltip-item-value,
+.recharts-default-tooltip .recharts-tooltip-item-separator {
+  color: var(--cor-texto-primario) !important;
+}
+.recharts-tooltip-cursor {
+  fill: rgba(255, 255, 255, 0.06) !important;
+  stroke: rgba(255, 255, 255, 0.25) !important;
 }
 
 /* Exportação de Ata em PDF pelo diálogo de impressão do navegador. A ata sai

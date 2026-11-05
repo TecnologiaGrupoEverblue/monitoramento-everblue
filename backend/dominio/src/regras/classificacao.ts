@@ -3,7 +3,7 @@
  * tendência da liquidez e alertas, pelas MESMAS regras da base do comitê
  * ("Base Carteira — Monitoramento", aba Análise da Carteira, quadro "Regras de
  * alerta" do Dashboard). Os limiares vêm de `RegraClassificacao` (tela de
- * Cadastros e Configurações), nunca fixos no código; os valores iniciais
+ * Parâmetros), nunca fixos no código; os valores iniciais
  * reproduzem a base.
  *
  * Unidade de análise: como na base, o grupo econômico consolidado — os
@@ -236,6 +236,7 @@ export function classificarCliente(entrada: EntradaClassificacao, lim: LimiaresC
   if (s.statusProposta === 'VENCIDA') add('ATENCAO', 'PROPOSTA_VENCIDA', 'Proposta vencida')
 
   if (status === 'JURIDICO') add('CRITICO', 'SITUACAO', 'Situação do cliente: JURÍDICO')
+  else if (status === 'RECUPERACAO_DE_CREDITO') add('CRITICO', 'SITUACAO', 'Situação do cliente: RECUPERAÇÃO DE CRÉDITO')
   else if (status === 'SAIDA_DE_RISCO') add('CRITICO', 'SITUACAO', 'Situação do cliente: SAÍDA DE RISCO')
   else if (status === 'MONITORAMENTO') add('ATENCAO', 'SITUACAO', 'Cliente em monitoramento')
 
@@ -302,7 +303,7 @@ export function classificarCliente(entrada: EntradaClassificacao, lim: LimiaresC
   }
 
   // Prioridade pela situação do cliente.
-  const prioridadeOrdem: PrioridadeOrdem = status === 'JURIDICO' ? 1 : status === 'SAIDA_DE_RISCO' ? 2 : status === 'MONITORAMENTO' ? 3 : 4
+  const prioridadeOrdem: PrioridadeOrdem = status === 'JURIDICO' || status === 'RECUPERACAO_DE_CREDITO' ? 1 : status === 'SAIDA_DE_RISCO' ? 2 : status === 'MONITORAMENTO' ? 3 : 4
 
   // Enquadramento: proposta vencida, risco acima do limite ou limite no teto.
   const motivos: string[] = []

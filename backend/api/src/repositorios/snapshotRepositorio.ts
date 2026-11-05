@@ -52,6 +52,16 @@ export class SnapshotRepositorio {
     return new Map(rows.map((r) => [String(r.cliente_id), mapear(r)]))
   }
 
+  /** Última posição de cada cliente ANTES da semana informada. */
+  async ultimosAntesDe(clienteIds: string[], semanaRef: string, executor: Executor = this.db): Promise<Map<string, SnapshotSemanal>> {
+    if (clienteIds.length === 0) return new Map()
+    const { rows } = await executor.query(
+      `SELECT DISTINCT ON (cliente_id) * FROM snapshot_semanal WHERE cliente_id = ANY($1) AND semana_ref < $2 ORDER BY cliente_id, semana_ref DESC`,
+      [clienteIds, semanaRef],
+    )
+    return new Map(rows.map((r) => [String(r.cliente_id), mapear(r)]))
+  }
+
   async clientesComSnapshotNaSemana(clienteIds: string[], semanaRef: string, executor: Executor = this.db): Promise<Set<string>> {
     if (clienteIds.length === 0) return new Set()
     const { rows } = await executor.query(`SELECT cliente_id FROM snapshot_semanal WHERE semana_ref = $1 AND cliente_id = ANY($2)`, [semanaRef, clienteIds])

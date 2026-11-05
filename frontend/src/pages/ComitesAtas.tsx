@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useMemo } from 'react'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useSessao } from '../contexts/SessaoContext'
 import { Painel } from '../components/ui/Card'
+import { TabelaResponsiva } from '../components/ui/TabelaResponsiva'
+import { NomeCliente } from '../components/ui/NomeCliente'
 import { CriticidadeClassificadaBadge, StatusBadge, StatusPlanoBadge } from '../components/ui/Badges'
-import type { Ata, Cliente, Comite, MotivoPauta, PautaComite } from '../models/types'
-import { clienteRepository, comiteAtaRepository, dashboardRepository, FILTROS_VAZIOS } from '../repositories'
+import { Carregando, ErroCarga } from '../components/ui/EstadoCarga'
+import type { MotivoPauta } from '../models/types'
+import { comiteAtaRepository, FILTROS_VAZIOS } from '../repositories'
+import { consultas, invalidar } from '../consultas'
+import { ErroApi } from '../api/cliente'
 import { formatarData, formatarMoeda, formatarPercentual } from '../utils/formatters'
 
 const ROTULO_MOTIVO: Record<MotivoPauta, string> = {
@@ -44,59 +50,42 @@ const ROTEIRO = [
 export default function ComitesAtas() {
   const podeGerar = useSessao().pode('analista')
   const navigate = useNavigate()
-  const [ata, setAta] = useState<Ata | null>(null)
-  const [comites, setComites] = useState<Comite[]>([])
-  const [clientesPorId, setClientesPorId] = useState<Map<string, Cliente>>(new Map())
-  const [decisoesRegistradas, setDecisoesRegistradas] = useState(0)
-  const [resumoAtual, setResumoAtual] = useState<{ risco: number; vencido: number; percVencido: number; limiteConsumido: number; trancheConsumida: number } | null>(null)
-  const [carregando, setCarregando] = useState(true)
-  const [gerando, setGerando] = useState(false)
-  const [pauta, setPauta] = useState<PautaComite | null>(null)
+  const clienteConsultas = useQueryClient()
+  const [ataQ, comitesQ, clientesQ, kpisQ, pautaQ] = useQueries({
+    queries: [consultas.ultimaAta(), consultas.comites(), consultas.clientes(), consultas.kpis(FILTROS_VAZIOS), consultas.pauta()],
+  })
+  const comites = comitesQ.data ?? []
+  const proximoComite = comites.find((c) => c.status === 'PLANEJADO')
+  const decisoesQ = useQuery({ ...consultas.decisoesRegistradas(proximoComite?.id ?? ''), enabled: Boolean(proximoComite) })
+  const ata = ataQ.data ?? null
+  const pauta = pautaQ.data ?? null
+  const clientesPorId = useMemo(() => new Map((clientesQ.data ?? []).map((c) => [c.id, c])), [clientesQ.data])
+  const decisoesRegistradas = decisoesQ.data ?? 0
+  const kpis = kpisQ.data
+  const resumoAtual = kpis
+    ? {
+        risco: kpis.atual.risco,
+        vencido: kpis.atual.vencido,
+        percVencido: kpis.atual.percVencido,
+        limiteConsumido: kpis.atual.percLimiteConsumido,
+        trancheConsumida: kpis.atual.percTrancheConsumida,
+      }
+    : null
+  const consultasTela = [ataQ, comitesQ, clientesQ, kpisQ, pautaQ]
+  const carregando = consultasTela.some((q) => q.isPending)
+  const falha = consultasTela.find((q) => q.isError)
 
-  const carregar = useCallback(() => {
-    setCarregando(true)
-    return Promise.all([
-      comiteAtaRepository.ultimaAtaRealizada(),
-      comiteAtaRepository.listarComites(),
-      clienteRepository.listarTodos(),
-      dashboardRepository.obterKPIs(FILTROS_VAZIOS),
-      comiteAtaRepository.pauta(),
-    ]).then(
-      async ([ataAnterior, listaComites, clientes, kpis, pautaProxima]) => {
-        setAta(ataAnterior)
-        setPauta(pautaProxima)
-        setComites(listaComites)
-        setClientesPorId(new Map(clientes.map((c) => [c.id, c])))
-        setResumoAtual({
-          risco: kpis.atual.risco,
-          vencido: kpis.atual.vencido,
-          percVencido: kpis.atual.percVencido,
-          limiteConsumido: kpis.atual.percLimiteConsumido,
-          trancheConsumida: kpis.atual.percTrancheConsumida,
-        })
-        const planejado = listaComites.find((c) => c.status === 'PLANEJADO')
-        setDecisoesRegistradas(planejado ? await comiteAtaRepository.decisoesRegistradas(planejado.id) : 0)
-        setCarregando(false)
-      },
-    )
-  }, [])
-
-  useEffect(() => {
-    carregar()
-  }, [carregar])
-
-  async function gerarAta() {
-    const proximoComite = comites.find((c) => c.status === 'PLANEJADO')
-    if (!proximoComite) return
-    setGerando(true)
-    await comiteAtaRepository.gerarAta(proximoComite.id)
-    await carregar()
-    setGerando(false)
+  const gerar = useMutation({
+    mutationFn: (comiteId: string) => comiteAtaRepository.gerarAta(comiteId),
+    onSuccess: () => invalidar(clienteConsultas, 'carteira'),
+  })
+  const gerando = gerar.isPending
+  function gerarAta() {
+    if (proximoComite) gerar.mutate(proximoComite.id)
   }
 
-  const proximoComite = comites.find((c) => c.status === 'PLANEJADO')
-
-  if (carregando) return <p className="text-sm text-gray-500">Carregando…</p>
+  if (falha) return <ErroCarga erro={falha.error} aoTentarDeNovo={() => consultasTela.forEach((q) => q.isError && void q.refetch())} />
+  if (carregando) return <Carregando />
 
   return (
     <div className="flex flex-col gap-6">
@@ -151,35 +140,23 @@ export default function ComitesAtas() {
             Clientes discutidos
           </h4>
           {ata.clientesDiscutidos.length === 0 ? (
-            <p className="mb-4 py-4 text-center text-sm text-gray-400">Nenhum caso com decisão registrada neste comitê.</p>
+            <p className="mb-4 py-4 text-center text-sm text-[color:var(--cor-texto-secundario)]">Nenhum caso com decisão registrada neste comitê.</p>
           ) : (
-            <div className="mb-4 overflow-x-auto border" style={{ borderColor: 'var(--cor-borda)' }}>
-              <table className="w-full text-sm">
-                <thead className="border-b text-[12.5px] font-medium" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda-forte)' }}>
-                  <tr>
-                    <th className="px-3 py-2 text-left">Cliente</th>
-                    <th className="px-3 py-2 text-right">Risco</th>
-                    <th className="px-3 py-2 text-right">% Vencido</th>
-                    <th className="px-3 py-2 text-left">Nova decisão</th>
-                    <th className="px-3 py-2 text-left">Responsável</th>
-                    <th className="px-3 py-2 text-left">Prazo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ata.clientesDiscutidos.map((cd) => (
-                    <tr key={cd.clienteId} className="cursor-pointer border-t hover:bg-[var(--cor-fundo-recuado)]" style={{ borderColor: 'var(--cor-borda)' }} onClick={() => navigate(`/clientes/${cd.clienteId}`)}>
-                      <td className="px-3 py-2 font-medium" style={{ color: 'var(--cor-primaria)' }}>
-                        {clientesPorId.get(cd.clienteId)?.nome ?? '—'}
-                      </td>
-                      <td className="numeros-tabulares px-3 py-2 text-right">{formatarMoeda(cd.riscoTomado)}</td>
-                      <td className="numeros-tabulares px-3 py-2 text-right">{formatarPercentual(cd.percVencido)}</td>
-                      <td className="px-3 py-2">{cd.novaDecisao}</td>
-                      <td className="px-3 py-2">{cd.responsavel}</td>
-                      <td className="px-3 py-2">{formatarData(cd.prazo)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="mb-4">
+              <TabelaResponsiva
+                rotulo="Clientes discutidos"
+                linhas={ata.clientesDiscutidos}
+                chave={(cd) => `${cd.clienteId}-${cd.planoAcaoId ?? ''}`}
+                aoClicar={(cd) => navigate(`/clientes/${cd.clienteId}`)}
+                colunas={[
+                  { chave: 'cliente', titulo: 'Cliente', principal: true, classe: 'font-medium min-w-[160px]', render: (cd) => <NomeCliente nome={clientesPorId.get(cd.clienteId)?.nome} documento={clientesPorId.get(cd.clienteId)?.cnpj} /> },
+                  { chave: 'risco', titulo: 'Risco', alinhar: 'right', classe: 'numeros-tabulares whitespace-nowrap', render: (cd) => formatarMoeda(cd.riscoTomado) },
+                  { chave: 'vencido', titulo: '% Vencido', alinhar: 'right', classe: 'numeros-tabulares whitespace-nowrap', render: (cd) => formatarPercentual(cd.percVencido) },
+                  { chave: 'decisao', titulo: 'Nova decisão', classe: 'min-w-[180px]', render: (cd) => cd.novaDecisao },
+                  { chave: 'responsavel', titulo: 'Responsável', render: (cd) => cd.responsavel },
+                  { chave: 'prazo', titulo: 'Prazo', classe: 'whitespace-nowrap', render: (cd) => formatarData(cd.prazo) },
+                ]}
+              />
             </div>
           )}
 
@@ -192,9 +169,7 @@ export default function ComitesAtas() {
                 {ata.clientesDiscutidos.map((cd) => (
                   <div key={`det-${cd.clienteId}-${cd.planoAcaoId}`} className="ata-bloco border p-3 text-sm" style={{ borderColor: 'var(--cor-borda)' }}>
                     <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <span className="font-semibold" style={{ color: 'var(--cor-primaria)' }}>
-                        {clientesPorId.get(cd.clienteId)?.nome ?? '—'}
-                      </span>
+                      <NomeCliente nome={clientesPorId.get(cd.clienteId)?.nome} documento={clientesPorId.get(cd.clienteId)?.cnpj} />
                       {cd.criticidadeCalculada && <span className="text-xs">Criticidade: {cd.criticidadeCalculada}</span>}
                       {cd.enquadramento && <span className="text-xs">· {cd.enquadramento}</span>}
                       <span className="text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
@@ -227,43 +202,21 @@ export default function ComitesAtas() {
           <h4 className="mb-1.5 border-b pb-1 text-[13px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda)' }}>
             Pendências do comitê
           </h4>
-          <div className="overflow-x-auto border" style={{ borderColor: 'var(--cor-borda)' }}>
-            <table className="w-full text-sm">
-              <thead className="border-b text-[12.5px] font-medium" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda-forte)' }}>
-                <tr>
-                  <th className="px-3 py-2 text-left">Cliente</th>
-                  <th className="px-3 py-2 text-left">Decisão</th>
-                  <th className="px-3 py-2 text-left">Ação</th>
-                  <th className="px-3 py-2 text-left">Responsável</th>
-                  <th className="px-3 py-2 text-left">Prazo</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ata.pendencias.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-4 text-center text-gray-400">
-                      Sem pendências registradas.
-                    </td>
-                  </tr>
-                )}
-                {ata.pendencias.map((p, i) => (
-                  <tr key={i} className="cursor-pointer border-t hover:bg-[var(--cor-fundo-recuado)]" style={{ borderColor: 'var(--cor-borda)' }} onClick={() => navigate(`/clientes/${p.clienteId}`)}>
-                    <td className="px-3 py-2 font-medium" style={{ color: 'var(--cor-primaria)' }}>
-                      {clientesPorId.get(p.clienteId)?.nome ?? '—'}
-                    </td>
-                    <td className="px-3 py-2">{p.decisao}</td>
-                    <td className="px-3 py-2 text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>{p.acao}</td>
-                    <td className="px-3 py-2">{p.responsavel}</td>
-                    <td className="px-3 py-2">{formatarData(p.prazo)}</td>
-                    <td className="px-3 py-2">
-                      <StatusPlanoBadge status={p.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TabelaResponsiva
+            rotulo="Pendências do comitê"
+            linhas={ata.pendencias}
+            chave={(p) => `${p.clienteId}-${p.decisao}-${p.prazo}`}
+            aoClicar={(p) => navigate(`/clientes/${p.clienteId}`)}
+            vazio="Sem pendências registradas."
+            colunas={[
+              { chave: 'cliente', titulo: 'Cliente', principal: true, classe: 'font-medium min-w-[160px]', render: (p) => <NomeCliente nome={clientesPorId.get(p.clienteId)?.nome} documento={clientesPorId.get(p.clienteId)?.cnpj} /> },
+              { chave: 'status', titulo: 'Status', render: (p) => <StatusPlanoBadge status={p.status} /> },
+              { chave: 'decisao', titulo: 'Decisão', classe: 'min-w-[160px]', render: (p) => p.decisao },
+              { chave: 'acao', titulo: 'Ação', classe: 'min-w-[160px] text-xs', render: (p) => <span style={{ color: 'var(--cor-texto-secundario)' }}>{p.acao}</span> },
+              { chave: 'responsavel', titulo: 'Responsável', render: (p) => p.responsavel },
+              { chave: 'prazo', titulo: 'Prazo', classe: 'whitespace-nowrap', render: (p) => formatarData(p.prazo) },
+            ]}
+          />
           </div>
         </Painel>
       )}
@@ -283,6 +236,11 @@ export default function ComitesAtas() {
             </button>
           }
         >
+          {gerar.isError && (
+            <p role="alert" className="mb-3 border-l-2 p-2 text-xs" style={{ borderColor: 'var(--cor-critico)', backgroundColor: 'var(--cor-critico-fundo)', color: 'var(--cor-critico)' }}>
+              {gerar.error instanceof ErroApi ? gerar.error.message : 'Não foi possível gerar a ata.'}
+            </p>
+          )}
           {pauta && (
             <div className="mb-4">
               <h4 className="mb-1.5 border-b pb-1 text-[13px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda)' }}>
@@ -302,9 +260,7 @@ export default function ComitesAtas() {
                         className="flex w-full flex-col gap-1 py-2 text-left hover:bg-[var(--cor-fundo-recuado)] sm:flex-row sm:items-start sm:gap-3"
                       >
                         <span className="flex min-w-0 flex-wrap items-center gap-2 sm:w-72 sm:shrink-0">
-                          <span className="font-medium" style={{ color: 'var(--cor-primaria)' }}>
-                            {item.nome}
-                          </span>
+                          <NomeCliente nome={item.nome} documento={clientesPorId.get(item.clienteId)?.cnpj} />
                           <StatusBadge status={item.status} />
                           {item.criticidade && <CriticidadeClassificadaBadge criticidade={item.criticidade} />}
                         </span>

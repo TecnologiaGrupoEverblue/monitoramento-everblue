@@ -19,7 +19,7 @@
  */
 import { CAMPOS_IMPORTACAO, chaveTexto } from './planilhaImportacao'
 
-export type FormatoImportacao = 'MODELO' | 'BASE_COMITE'
+export type FormatoImportacao = 'MODELO' | 'BASE_COMITE' | 'BITFIN'
 
 /** Nome da aba da base do comitê (a API procura por ele). */
 export const ABA_BASE_COMITE = 'Análise da Carteira'

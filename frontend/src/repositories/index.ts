@@ -54,6 +54,13 @@ import {
   type RegraClassificacao,
   type RestritivoSemanal,
   type PoliticaArquivos,
+  type AgendamentoFoto,
+  type ComparacaoFoto,
+  type DetalheBitfinDoCliente,
+  type ExecucaoFoto,
+  type SituacaoFoto,
+  type EnvioMapa,
+  type TelaMapaGarantias,
 } from '@monitoramento/dominio'
 import { addDays, format } from 'date-fns'
 import { api, enviarComProgresso, requisitar } from '../api/cliente'
@@ -262,6 +269,35 @@ export const importacaoRepository = {
   recalcularPreview: (importacaoId: string, semanaRef: string) => api.post<PreviewImportacao>(`${V1}/importacoes/${cod(importacaoId)}/previa`, { semanaRef }),
   confirmarImportacao: (importacaoId: string, semanaRef: string) =>
     api.post<ResultadoConfirmacaoImportacao>(`${V1}/importacoes/${cod(importacaoId)}/confirmar`, { semanaRef }),
+}
+
+// ------------------------------------------------------------------ Foto do Bitfin (1.2)
+
+export const fotoBitfinRepository = {
+  situacao: () => api.get<SituacaoFoto>(`${V1}/foto-bitfin/situacao`),
+  tirar: (gravarPosicao: boolean) => api.post<{ id: string }>(`${V1}/foto-bitfin`, { gravarPosicao }),
+  execucoes: (antesDe?: string) => api.get<ExecucaoFoto[]>(`${V1}/foto-bitfin/execucoes`, { limite: '30', antesDe }),
+  execucao: (id: string) => api.get<ExecucaoFoto>(`${V1}/foto-bitfin/execucoes/${cod(id)}`),
+  comparacao: (id: string) => api.get<ComparacaoFoto>(`${V1}/foto-bitfin/execucoes/${cod(id)}/comparacao`),
+  salvarAgendamento: (a: Pick<AgendamentoFoto, 'ativo' | 'horario' | 'diasSemana' | 'diaPosicaoSemanal'>) => api.put<void>(`${V1}/foto-bitfin/agendamento`, a),
+  testarConexao: () => api.post<{ ok: boolean; servidorAgora: string; banco: string }>(`${V1}/foto-bitfin/testar-conexao`),
+  doCliente: (clienteId: string, ate?: string) => api.get<DetalheBitfinDoCliente | null>(`${V1}/clientes/${cod(clienteId)}/bitfin`, { ate }),
+}
+
+export const mapaGarantiasRepository = {
+  tela: () => api.get<TelaMapaGarantias>(`${V1}/mapa-garantias`),
+  envios: () => api.get<EnvioMapa[]>(`${V1}/mapa-garantias/envios`),
+  incluirCliente: (documento: string) => api.post<{ documento: string; nome: string | null; aviso: string | null }>(`${V1}/mapa-garantias/clientes`, { documento }),
+  removerCliente: (documento: string) => requisitar<void>('DELETE', `${V1}/mapa-garantias/clientes/${cod(documento)}`),
+  salvarConfig: (
+    documento: string,
+    c: { contasGraficas: number[] | null; deducoes: { valor: number; justificativa: string }[]; concentracaoExcedida: string | null; sacadoComRestricao: string | null },
+  ) => api.put<void>(`${V1}/mapa-garantias/clientes/${cod(documento)}/config`, c),
+  incluirCopia: (email: string) => api.post<{ email: string }>(`${V1}/mapa-garantias/copias`, { email }),
+  removerCopia: (email: string) => requisitar<void>('DELETE', `${V1}/mapa-garantias/copias/${cod(email)}`),
+  enviar: () => api.post<{ loteId: string; enviados: number; falhas: number; naoEnviados: number }>(`${V1}/mapa-garantias/enviar`),
+  definirEnvioDiario: (ativo: boolean) => api.put<void>(`${V1}/mapa-garantias/envio-diario`, { ativo }),
+  urlPdf: `${V1}/mapa-garantias/pdf`,
 }
 
 // ------------------------------------------------------------------ Central de Arquivos (MinIO)

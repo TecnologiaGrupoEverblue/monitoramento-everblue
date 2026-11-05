@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Loader2, ShieldCheck } from 'lucide-react'
 import AvisoIntranet from '../components/ui/AvisoIntranet'
-import { sessaoRepository } from '../repositories'
+import { consultas } from '../consultas'
 
 /** Mensagens escolhidas por CHAVE — nunca um texto recebido pela URL. */
 const MENSAGENS: Record<string, string> = {
@@ -26,20 +27,15 @@ export default function Login() {
   const parametros = new URLSearchParams(window.location.search)
   const erro = MENSAGENS[parametros.get('erro') ?? ''] ?? null
   const destino = destinoSeguro(parametros.get('destino'))
-  const [entraDisponivel, setEntraDisponivel] = useState<boolean | null>(null)
   const [indo, setIndo] = useState(false)
+  const sessao = useQuery(consultas.sessao())
+  const modo = useQuery(consultas.modoAutenticacao())
+  const entraDisponivel: boolean | null = modo.isPending ? null : modo.isError ? false : modo.data.entraDisponivel
 
+  // Já autenticado? Vai direto ao destino.
   useEffect(() => {
-    // Já autenticado? Vai direto ao destino.
-    sessaoRepository
-      .obter()
-      .then(() => window.location.replace(destino))
-      .catch(() => undefined)
-    sessaoRepository
-      .modo()
-      .then((m) => setEntraDisponivel(m.entraDisponivel))
-      .catch(() => setEntraDisponivel(false))
-  }, [destino])
+    if (sessao.isSuccess) window.location.replace(destino)
+  }, [sessao.isSuccess, destino])
 
   return (
     <div className="relative flex min-h-dvh items-center justify-center overflow-hidden p-4" style={{ background: 'linear-gradient(135deg, #001035 0%, #001751 40%, #1B1489 100%)' }}>

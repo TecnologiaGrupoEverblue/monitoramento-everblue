@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ChevronDown, ChevronUp, Filter, X } from 'lucide-react'
 import { useFiltros } from '../../contexts/FiltrosContext'
 import { formatarData } from '../../utils/formatters'
+import { formatarDocumento } from '@monitoramento/dominio'
 
 function Select({ label, valor, onChange, opcoes }: { label: string; valor: string; onChange: (v: string) => void; opcoes: { valor: string; label: string }[] }) {
   return (
@@ -75,7 +76,7 @@ export default function Topbar() {
             <Select label="Plataforma" valor={filtros.plataformaId ?? ''} onChange={(v) => atualizarFiltro('plataformaId', v || null)} opcoes={opcoes.plataformas.map((p) => ({ valor: p.id, label: p.nome }))} />
             <Select label="Gerente" valor={filtros.gerenteId ?? ''} onChange={(v) => atualizarFiltro('gerenteId', v || null)} opcoes={opcoes.gerentes.map((g) => ({ valor: g.id, label: g.nome }))} />
             <Select label="Grupo econômico" valor={filtros.grupoEconomicoId ?? ''} onChange={(v) => atualizarFiltro('grupoEconomicoId', v || null)} opcoes={opcoes.grupos.map((g) => ({ valor: g.id, label: g.nome }))} />
-            <Select label="Cliente" valor={filtros.clienteId ?? ''} onChange={(v) => atualizarFiltro('clienteId', v || null)} opcoes={opcoes.clientes.map((c) => ({ valor: c.id, label: c.nome }))} />
+            <Select label="Cliente" valor={filtros.clienteId ?? ''} onChange={(v) => atualizarFiltro('clienteId', v || null)} opcoes={opcoes.clientes.map((c) => ({ valor: c.id, label: `${c.nome} — ${formatarDocumento(c.cnpj)}` }))} />
             <Select
               label="Status"
               valor={filtros.status ?? ''}
@@ -84,6 +85,7 @@ export default function Topbar() {
                 { valor: 'NORMAL', label: 'Normal' },
                 { valor: 'MONITORAMENTO', label: 'Monitoramento' },
                 { valor: 'SAIDA_DE_RISCO', label: 'Saída de Risco' },
+                { valor: 'RECUPERACAO_DE_CREDITO', label: 'Recuperação de Crédito' },
                 { valor: 'JURIDICO', label: 'Jurídico' },
               ]}
             />

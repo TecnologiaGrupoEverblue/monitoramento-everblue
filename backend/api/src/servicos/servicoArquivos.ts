@@ -255,8 +255,17 @@ export class ServicoArquivos {
 
   /** Exclusão lógica: some das listas, o conteúdo continua no MinIO e pode
    * voltar com `reativar`. */
-  excluir(arquivoId: string, motivo: string, ator: Ator) {
+  async excluir(arquivoId: string, motivo: string, ator: Ator) {
+    await this.recusarSeFotoProtegida(arquivoId)
     return this.mudarSituacao(arquivoId, 'EXCLUIDO', 'excluido', motivo, ator)
+  }
+
+  /** Leitura bruta de foto do Bitfin que gravou posição ou gerou Mapa é
+   * permanente; a de teste só sai depois de 90 dias, pelo expurgo (ADR-021). */
+  private async recusarSeFotoProtegida(arquivoId: string) {
+    if (await this.arquivos.protegidoPorFoto(arquivoId)) {
+      throw new ErroNegocio('Esta é a leitura de uma foto do Bitfin protegida (permanente, ou foto de teste com menos de 90 dias). Não pode ser excluída.', 409, 'foto_protegida')
+    }
   }
 
   /** Expurgo definitivo: apaga do MinIO TODAS as versões (e as versões
@@ -264,6 +273,7 @@ export class ServicoArquivos {
   async expurgar(arquivoId: string, motivo: string, ator: Ator): Promise<ArquivoResumo> {
     const atual = await this.exigir(arquivoId)
     this.conferirTransicao(atual.situacao, 'EXPURGADO')
+    await this.recusarSeFotoProtegida(arquivoId)
     const hoje = new Date().toISOString().slice(0, 10)
     if (atual.retencaoAte && atual.retencaoAte >= hoje) {
       throw new ErroNegocio(`Arquivo em retenção obrigatória até ${atual.retencaoAte.split('-').reverse().join('/')}. Ajuste a retenção antes de expurgar.`, 409, 'em_retencao')

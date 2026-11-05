@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useMemo } from 'react'
+import { useQueries, useQueryClient } from '@tanstack/react-query'
+import { Carregando, ErroCarga } from '../components/ui/EstadoCarga'
+import { consultas } from '../consultas'
 import { useNavigate, useParams } from 'react-router-dom'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import ChecklistAnalise from '../components/ChecklistAnalise'
@@ -10,42 +13,14 @@ import PainelTransacional from '../components/PainelTransacional'
 import { Painel } from '../components/ui/Card'
 import { useFiltros } from '../contexts/FiltrosContext'
 import { CriticidadeBadge, GravidadeBadge, PrioridadeBadge, StatusBadge } from '../components/ui/Badges'
-import type {
-  Alerta,
-  ClassificacaoSemanal,
-  Cliente,
-  DocumentoCliente,
-  EventoHistorico,
-  Gerente,
-  GrupoEconomico,
-  Juridico,
-  PlanoAcao,
-  Plataforma,
-  RestritivoSemanal,
-  SaidaDeRisco,
-  SnapshotSemanal,
-} from '../models/types'
-import {
-  alertaRepository,
-  cadastrosRepository,
-  classificacaoRepository,
-  clienteRepository,
-  eventoRepository,
-  iasrRepository,
-  juridicoRepository,
-  planoAcaoRepository,
-  restritivoRepository,
-  saidaDeRiscoRepository,
-  snapshotRepository,
-} from '../repositories'
-import { formatarData, formatarDataHora, formatarMoeda, formatarMoedaCompacta, formatarPercentual, formatarPercentualOpcional, STATUS_LABEL, STATUS_PROPOSTA_LABEL } from '../utils/formatters'
+import { formatarData, formatarDataHora, formatarDias, formatarMoeda, formatarMoedaCompacta, formatarPercentual, formatarPercentualOpcional, STATUS_LABEL, STATUS_PROPOSTA_LABEL } from '../utils/formatters'
 
 /** Sem posição importada o valor é DESCONHECIDO, não zero (dado ausente nunca
  * aparece como favorável). */
 const SEM_POSICAO = '—'
 const moeda = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : formatarMoeda(v))
 const perc = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : formatarPercentual(v))
-const dias = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : `${v} dias`)
+const dias = (v: number | null | undefined) => (v === null || v === undefined ? SEM_POSICAO : formatarDias(v))
 
 const ROTULO_EVENTO: Record<string, string> = {
   MUDANCA_CRITICIDADE: 'Criticidade',
@@ -59,65 +34,46 @@ export default function FichaCliente() {
   const navigate = useNavigate()
   const { filtros, opcoes } = useFiltros()
   const podeEditar = useSessao().pode('analista')
-  const [cliente, setCliente] = useState<Cliente | null>(null)
-  const [grupo, setGrupo] = useState<GrupoEconomico | null>(null)
-  const [gerente, setGerente] = useState<Gerente | null>(null)
-  const [plataforma, setPlataforma] = useState<Plataforma | null>(null)
-  const [serie, setSerie] = useState<SnapshotSemanal[]>([])
-  const [eventos, setEventos] = useState<EventoHistorico[]>([])
-  const [alertas, setAlertas] = useState<Alerta[]>([])
-  const [planos, setPlanos] = useState<PlanoAcao[]>([])
-  const [saida, setSaida] = useState<SaidaDeRisco | null>(null)
-  const [juridico, setJuridico] = useState<Juridico | null>(null)
-  const [eventosIasr, setEventosIasr] = useState<{ tipo: string; data: string; descricao: string }[]>([])
-  const [documentos, setDocumentos] = useState<DocumentoCliente[]>([])
-  const [classificacoes, setClassificacoes] = useState<ClassificacaoSemanal[]>([])
-  const [restritivos, setRestritivos] = useState<RestritivoSemanal[]>([])
-  const [carregando, setCarregando] = useState(true)
+  const clienteConsultas = useQueryClient()
+  const cid = id ?? ''
+  const r = useQueries({
+    queries: [
+      { ...consultas.cliente(cid), enabled: Boolean(id) },
+      { ...consultas.snapshotsCliente(cid), enabled: Boolean(id) },
+      { ...consultas.eventosCliente(cid), enabled: Boolean(id) },
+      { ...consultas.alertasCliente(cid), enabled: Boolean(id) },
+      { ...consultas.planosCliente(cid), enabled: Boolean(id) },
+      { ...consultas.saidaCliente(cid), enabled: Boolean(id) },
+      { ...consultas.juridicoCliente(cid), enabled: Boolean(id) },
+      { ...consultas.iasrRegistros(), enabled: Boolean(id) },
+      { ...consultas.documentosCliente(cid), enabled: Boolean(id) },
+      { ...consultas.classificacoesCliente(cid), enabled: Boolean(id) },
+      { ...consultas.restritivos(cid), enabled: Boolean(id) },
+    ],
+  })
+  const [clienteQ, serieQ, eventosQ, alertasQ, planosQ, saidaQ, juridicoQ, iasrQ, documentosQ, classificacoesQ, restritivosQ] = r
+  const cliente = clienteQ.data
+  const serie = serieQ.data ?? []
+  const eventos = eventosQ.data ?? []
+  const alertas = alertasQ.data ?? []
+  const planos = planosQ.data ?? []
+  const saida = saidaQ.data ?? null
+  const juridico = juridicoQ.data ?? null
+  const eventosIasr = useMemo(
+    () => (iasrQ.data ?? []).filter((x) => x.clienteId === id).flatMap((x) => x.eventos),
+    [iasrQ.data, id],
+  )
+  const documentos = documentosQ.data ?? []
+  const classificacoes = classificacoesQ.data ?? []
+  const restritivos = restritivosQ.data ?? []
+  const grupo = cliente ? (opcoes.grupos.find((g) => g.id === cliente.grupoEconomicoId) ?? null) : null
+  const gerente = cliente ? (opcoes.gerentes.find((g) => g.id === cliente.gerenteId) ?? null) : null
+  const plataforma = cliente ? (opcoes.plataformas.find((p) => p.id === cliente.plataformaId) ?? null) : null
+  const falha = r.find((q) => q.isError)
 
-  useEffect(() => {
-    if (!id) return
-    let ativo = true
-    setCarregando(true)
-    Promise.all([
-      clienteRepository.porId(id),
-      cadastrosRepository.mapaGrupos(),
-      cadastrosRepository.mapaGerentes(),
-      cadastrosRepository.mapaPlataformas(),
-      snapshotRepository.porCliente(id),
-      eventoRepository.porCliente(id),
-      alertaRepository.porCliente(id),
-      planoAcaoRepository.porCliente(id),
-      saidaDeRiscoRepository.porCliente(id),
-      juridicoRepository.porCliente(id),
-      iasrRepository.listarComEventos(),
-      clienteRepository.documentos(id),
-      classificacaoRepository.porCliente(id),
-      restritivoRepository.porCliente(id),
-    ]).then(([cli, grupos, gerentes, plataformas, snaps, ev, al, pl, sdr, jur, iasr, docs, cls, rest]) => {
-      if (!ativo || !cli) return
-      setCliente(cli)
-      setGrupo(grupos.get(cli.grupoEconomicoId) ?? null)
-      setGerente(gerentes.get(cli.gerenteId) ?? null)
-      setPlataforma(plataformas.get(cli.plataformaId) ?? null)
-      setSerie(snaps)
-      setEventos(ev)
-      setAlertas(al)
-      setPlanos(pl)
-      setSaida(sdr)
-      setJuridico(jur)
-      setEventosIasr(iasr.filter((r) => r.clienteId === id).flatMap((r) => r.eventos))
-      setDocumentos(docs)
-      setClassificacoes(cls)
-      setRestritivos(rest)
-      setCarregando(false)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [id])
-
-  if (carregando || !cliente) return <p className="text-sm text-gray-500">Carregando…</p>
+  if (falha) return <ErroCarga erro={falha.error} aoTentarDeNovo={() => r.forEach((q) => q.isError && void q.refetch())} />
+  if (r.some((q) => q.isPending)) return <Carregando />
+  if (!cliente) return <p className="p-6 text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>Cliente não encontrado.</p>
 
   const atual = serie[serie.length - 1]
   const anterior = serie[serie.length - 2]
@@ -148,18 +104,27 @@ export default function FichaCliente() {
             {carteira && ` · Carteira ${carteira.nome}${carteira.apartada ? ' (apartada)' : ''}`}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <StatusBadge status={cliente.status} />
-          <CriticidadeBadge criticidade={cliente.criticidade} />
-          <PrioridadeBadge prioridade={cliente.prioridade} />
-        </div>
+        <dl className="flex flex-wrap gap-3 text-[11px]">
+          {(
+            [
+              ['Status', <StatusBadge key="s" status={cliente.status} />],
+              ['Criticidade', <CriticidadeBadge key="c" criticidade={cliente.criticidade} />],
+              ['Prioridade', <PrioridadeBadge key="p" prioridade={cliente.prioridade} />],
+            ] as const
+          ).map(([rotulo, selo]) => (
+            <div key={rotulo} className="flex flex-col gap-0.5">
+              <dt style={{ color: 'var(--cor-texto-secundario)' }}>{rotulo}</dt>
+              <dd>{selo}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
 
       <Painel titulo="Checklist de Análise Semanal — roteiro do comitê para este cliente">
         <ChecklistAnalise clienteId={cliente.id} semanaRef={semanaRefChecklist} usuario={cliente.responsavel} />
       </Painel>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <PainelClassificacao historico={classificacoes} semanaRef={semanaRefChecklist} />
 
         <Painel titulo="Identificação">
@@ -266,9 +231,9 @@ export default function FichaCliente() {
           />
         </Painel>
 
-        <PainelRestritivos clienteId={cliente.id} semanaRef={semanaRefChecklist} restritivos={restritivos} podeEditar={podeEditar} aoAtualizar={setRestritivos} />
+        <PainelRestritivos clienteId={cliente.id} semanaRef={semanaRefChecklist} restritivos={restritivos} podeEditar={podeEditar} aoAtualizar={(lista) => clienteConsultas.setQueryData(consultas.restritivos(cliente.id).queryKey, lista)} />
 
-        <Painel titulo="Evolução do risco x vencido" className="lg:col-span-2">
+        <Painel titulo="Evolução do risco x vencido" className="xl:col-span-2">
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={dadosRisco} margin={{ left: 8, right: 16, top: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--cor-grade)" />
@@ -281,12 +246,12 @@ export default function FichaCliente() {
           </ResponsiveContainer>
         </Painel>
 
-        <div className="lg:col-span-2">
+        <div className="xl:col-span-2">
           <PainelTransacional clienteId={cliente.id} />
         </div>
 
         {saida && (
-          <Painel titulo="Saída de Risco" className="lg:col-span-2">
+          <Painel titulo="Saída de Risco" className="xl:col-span-2">
             <DlGrid
               itens={[
                 ['Data de entrada', formatarData(saida.dataEntrada)],
@@ -316,7 +281,7 @@ export default function FichaCliente() {
         )}
 
         {juridico && (
-          <Painel titulo="Jurídico" className="lg:col-span-2">
+          <Painel titulo="Jurídico" className="xl:col-span-2">
             <DlGrid
               itens={[
                 ['Data de envio', formatarData(juridico.dataEnvio)],
@@ -333,17 +298,17 @@ export default function FichaCliente() {
           </Painel>
         )}
 
-        <Painel titulo={`Alertas (${alertas.length})`} className="lg:col-span-2">
+        <Painel titulo={`Alertas (${alertas.length})`} className="xl:col-span-2">
           {alertas.length === 0 ? (
-            <p className="py-4 text-center text-sm text-gray-400">Nenhum alerta registrado.</p>
+            <p className="py-4 text-center text-sm text-[color:var(--cor-texto-secundario)]">Nenhum alerta registrado.</p>
           ) : (
             <ul className="flex flex-col gap-2">
               {alertas.map((a) => (
                 <li key={a.id} className="flex items-start justify-between gap-2 rounded-lg border p-2 text-sm" style={{ borderColor: 'var(--cor-borda)' }}>
                   <div>
                     <p className="font-medium">{a.tipo}</p>
-                    <p className="text-xs text-gray-600">{a.descricao}</p>
-                    <p className="text-[11px] text-gray-400">{formatarData(a.data)} · {a.responsavel}</p>
+                    <p className="text-xs text-[color:var(--cor-texto-secundario)]">{a.descricao}</p>
+                    <p className="text-[11px] text-[color:var(--cor-texto-secundario)]">{formatarData(a.data)} · {a.responsavel}</p>
                   </div>
                   <GravidadeBadge gravidade={a.gravidade} />
                 </li>
@@ -352,11 +317,11 @@ export default function FichaCliente() {
           )}
         </Painel>
 
-        <HistoricoDecisoes planos={planos} podeEditar={podeEditar} aoAtualizar={(p) => setPlanos((lista) => lista.map((x) => (x.id === p.id ? p : x)))} />
+        <HistoricoDecisoes planos={planos} podeEditar={podeEditar} aoAtualizar={(p) => clienteConsultas.setQueryData(consultas.planosCliente(cliente.id).queryKey, (lista) => lista?.map((x) => (x.id === p.id ? p : x)))} />
 
-        <Painel titulo="Linha do tempo" className="lg:col-span-2">
+        <Painel titulo="Linha do tempo" className="xl:col-span-2">
           {eventos.length === 0 ? (
-            <p className="py-4 text-center text-sm text-gray-400">Nenhum evento no histórico.</p>
+            <p className="py-4 text-center text-sm text-[color:var(--cor-texto-secundario)]">Nenhum evento no histórico.</p>
           ) : (
             <ul className="flex flex-col gap-3 border-l-2 pl-4" style={{ borderColor: 'var(--cor-borda)' }}>
               {eventos.map((e) => (

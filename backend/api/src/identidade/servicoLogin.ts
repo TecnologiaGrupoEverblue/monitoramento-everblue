@@ -155,6 +155,7 @@ export class ServicoLogin {
           tx,
         )
         await this.usuarios.registrarAutorizacaoNoLogin(existente.id, Boolean(acesso), tx)
+        await this.usuarios.gravarNivelAcesso(existente.id, acesso?.nivelAcesso ?? null, tx)
         return existente.id
       }
 
@@ -183,6 +184,7 @@ export class ServicoLogin {
         tx,
       )
       await this.usuarios.registrarAutorizacaoNoLogin(novoId, true, tx)
+      await this.usuarios.gravarNivelAcesso(novoId, acesso.nivelAcesso, tx)
       return novoId
     })
   }

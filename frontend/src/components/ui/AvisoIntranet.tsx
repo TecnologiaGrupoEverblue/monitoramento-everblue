@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ShieldAlert } from 'lucide-react'
 import { formatarDataHora } from '../../utils/formatters'
-import { saudeRepository, type EstadoIntranetPublico } from '../../repositories'
+import { consultas } from '../../consultas'
 
 const INTERVALO_MS = 2 * 60_000
 
@@ -11,18 +11,7 @@ const INTERVALO_MS = 2 * 60_000
  * de login e no topo do sistema; some sozinho quando a Intranet volta.
  */
 export default function AvisoIntranet({ variante }: { variante: 'login' | 'sistema' }) {
-  const [estado, setEstado] = useState<EstadoIntranetPublico | null>(null)
-
-  useEffect(() => {
-    let ativo = true
-    const atualizar = () => void saudeRepository.intranet().then((e) => ativo && setEstado(e))
-    atualizar()
-    const timer = window.setInterval(atualizar, INTERVALO_MS)
-    return () => {
-      ativo = false
-      window.clearInterval(timer)
-    }
-  }, [])
+  const { data: estado } = useQuery({ ...consultas.saudeIntranet(), refetchInterval: INTERVALO_MS })
 
   if (estado?.situacao !== 'INDISPONIVEL') return null
   const desde = estado.desde ? ` desde ${formatarDataHora(estado.desde)}` : ''

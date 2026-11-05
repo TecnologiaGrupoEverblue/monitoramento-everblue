@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, Download, FileText, Search, Upload } from 'lucide-react'
 import {
   FINALIDADES_ARQUIVO,
@@ -7,15 +8,14 @@ import {
   type ArquivoResumo,
   type FiltroArquivos,
   type FinalidadeArquivo,
-  type PaginaArquivos,
   type SituacaoArquivo,
-  type TotaisArquivos,
 } from '@monitoramento/dominio'
 import { DetalheArquivo } from '../components/arquivos/DetalheArquivo'
 import { EnvioArquivo } from '../components/arquivos/EnvioArquivo'
 import { COR_SITUACAO, ROTULO_FINALIDADE, ROTULO_SITUACAO } from '../components/arquivos/rotulos'
 import { useSessao } from '../contexts/SessaoContext'
 import { arquivoRepository } from '../repositories'
+import { consultas, invalidar } from '../consultas'
 
 const POR_PAGINA = 25
 const data = (iso: string) => new Date(iso).toLocaleDateString('pt-BR')
@@ -37,25 +37,18 @@ export default function CentralArquivos() {
   const { pode } = useSessao()
   const [filtro, setFiltro] = useState<FiltroArquivos>({ pagina: 1, porPagina: POR_PAGINA })
   const [busca, setBusca] = useState('')
-  const [pagina, setPagina] = useState<PaginaArquivos | null>(null)
-  const [totais, setTotais] = useState<TotaisArquivos | null>(null)
-  const [categorias, setCategorias] = useState<string[]>([])
-  const [erro, setErro] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const [aberto, setAberto] = useState<string | null>(null)
-
-  const recarregar = useCallback(() => {
-    setErro(null)
-    Promise.all([arquivoRepository.listar(filtro), arquivoRepository.totais(), arquivoRepository.categorias()])
-      .then(([p, t, c]) => {
-        setPagina(p)
-        setTotais(t)
-        setCategorias(c)
-      })
-      .catch(() => setErro('Não foi possível carregar os arquivos.'))
-  }, [filtro])
-
-  useEffect(recarregar, [recarregar])
+  const clienteConsultas = useQueryClient()
+  // Página anterior fica na tela enquanto a próxima carrega (sem piscar).
+  const paginaQ = useQuery({ ...consultas.arquivos(filtro), placeholderData: keepPreviousData })
+  const totaisQ = useQuery(consultas.totaisArquivos())
+  const categoriasQ = useQuery(consultas.categoriasArquivo())
+  const pagina = paginaQ.data ?? null
+  const totais = totaisQ.data ?? null
+  const categorias = categoriasQ.data ?? []
+  const erro = paginaQ.isError || totaisQ.isError || categoriasQ.isError ? 'Não foi possível carregar os arquivos.' : null
+  const recarregar = () => void invalidar(clienteConsultas, 'arquivos')
 
   // Busca com pequena espera: não dispara a cada tecla.
   useEffect(() => {

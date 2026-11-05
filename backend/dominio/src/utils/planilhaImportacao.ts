@@ -1,14 +1,14 @@
 import type { StatusCliente, StatusProposta } from '../models/types'
 import { TIPOS_RESTRITIVO, type LinhaRestritivo, type TipoRestritivo } from '../regras/restritivos'
 
-const STATUS_CLIENTE_VALIDOS: StatusCliente[] = ['NORMAL', 'MONITORAMENTO', 'SAIDA_DE_RISCO', 'JURIDICO']
+const STATUS_CLIENTE_VALIDOS: StatusCliente[] = ['NORMAL', 'MONITORAMENTO', 'SAIDA_DE_RISCO', 'RECUPERACAO_DE_CREDITO', 'JURIDICO']
 /** Nome do cadastro de gerente para clientes que vêm sem gerente na base. */
 export const SEM_GERENTE = 'Sem Gerente'
 
 const STATUS_PROPOSTA_VALIDOS: StatusProposta[] = ['EM_ANALISE', 'APROVADA', 'VENCIDA', 'REPROVADA', 'SEM_PROPOSTA']
 
 /** Como a base do comitê escreve, aceito sem pedir que o usuário converta. */
-const SINONIMOS_STATUS_CLIENTE: Record<string, StatusCliente> = { SAIDA_DE_RISCO: 'SAIDA_DE_RISCO', 'SAIDA DE RISCO': 'SAIDA_DE_RISCO', JURIDICO: 'JURIDICO' }
+const SINONIMOS_STATUS_CLIENTE: Record<string, StatusCliente> = { SAIDA_DE_RISCO: 'SAIDA_DE_RISCO', 'SAIDA DE RISCO': 'SAIDA_DE_RISCO', 'RECUPERACAO DE CREDITO': 'RECUPERACAO_DE_CREDITO', JURIDICO: 'JURIDICO' }
 const SINONIMOS_STATUS_PROPOSTA: Record<string, StatusProposta> = { VIGENTE: 'APROVADA', 'SEM PROPOSTA': 'SEM_PROPOSTA', 'EM ANALISE': 'EM_ANALISE' }
 
 type TipoCampo =
@@ -60,24 +60,24 @@ export const CAMPOS_IMPORTACAO: CampoImportacao[] = [
   { coluna: 'Vencido Oficial (R$)', chave: 'vencidoOficial', tipo: 'numero' },
   { coluna: 'Vencido Desde (dd/mm/aaaa)', chave: 'vencidoDesde', tipo: 'dataOpcional' },
   { coluna: 'Aging da Carteira (dias)', chave: 'agingCarteiraDias', tipo: 'numero' },
-  { coluna: 'Prazo Médio da Carteira (dias)', chave: 'prazoMedioCarteiraDias', tipo: 'numero' },
+  { coluna: 'Prazo Médio da Carteira (dias)', chave: 'prazoMedioCarteiraDias', tipo: 'numeroOuNulo' },
   { coluna: 'IL 30 dias (%)', chave: 'il30', tipo: 'percentualOuNulo' },
   { coluna: 'IL 60 dias (%)', chave: 'il60', tipo: 'percentualOuNulo' },
   { coluna: 'IL 90 dias (%)', chave: 'il90', tipo: 'percentualOuNulo' },
   { coluna: 'IL 120 dias (%)', chave: 'il120', tipo: 'percentualOuNulo' },
   { coluna: 'IL 150 dias (%)', chave: 'il150', tipo: 'percentualOuNulo' },
   { coluna: 'IL 180 dias (%)', chave: 'il180', tipo: 'percentualOuNulo' },
-  { coluna: '% Sem Atuação de Manifesto', chave: 'manifestoPercSemAtuacao', tipo: 'numero' },
+  { coluna: '% Sem Atuação de Manifesto', chave: 'manifestoPercSemAtuacao', tipo: 'percentualOuNulo' },
   { coluna: 'Manifesto Inacessível (R$)', chave: 'manifestoInacessivel', tipo: 'numeroOpcional' },
   { coluna: 'Manifesto Não Confirma (R$)', chave: 'manifestoNaoConfirma', tipo: 'numeroOpcional' },
   { coluna: 'Manifesto Transação Desconhecida (R$)', chave: 'manifestoTransacaoDesconhecida', tipo: 'numeroOpcional' },
   { coluna: 'Manifesto Lastro Inconsistente (R$)', chave: 'manifestoLastroInconsistente', tipo: 'numeroOpcional' },
   { coluna: 'Manifesto Transação Não Concluída (R$)', chave: 'manifestoTransacaoNaoConcluida', tipo: 'numeroOpcional' },
-  { coluna: 'Liquidado no Período (R$)', chave: 'liquidadoNoPeriodo', tipo: 'numero' },
+  { coluna: 'Liquidado no Período (R$)', chave: 'liquidadoNoPeriodo', tipo: 'numeroOuNulo' },
   { coluna: 'Recompras (R$)', chave: 'recompras', tipo: 'numeroOpcional' },
   { coluna: 'Motivo da Recompra', chave: 'motivoRecompra', tipo: 'texto' },
-  { coluna: '% Liquidado no Prazo', chave: 'percLiquidadoNoPrazo', tipo: 'numero' },
-  { coluna: 'Atraso Médio (dias)', chave: 'atrasoMedioDias', tipo: 'numero' },
+  { coluna: '% Liquidado no Prazo', chave: 'percLiquidadoNoPrazo', tipo: 'percentualOuNulo' },
+  { coluna: 'Atraso Médio (dias)', chave: 'atrasoMedioDias', tipo: 'numeroOuNulo' },
   { coluna: 'Restritivos (quantidade)', chave: 'restritivos', tipo: 'numeroOpcional' },
   { coluna: 'Prorrogações acima de 60 dias (R$)', chave: 'prorrogacoesAcima60d', tipo: 'numeroOuNulo', opcional: true },
   { coluna: 'Operações no Mês Anterior (R$)', chave: 'operacoesMesAnterior', tipo: 'numeroOuNulo', opcional: true },
@@ -113,24 +113,24 @@ export interface LinhaValidada {
   vencidoOficial: number
   vencidoDesde: string | null
   agingCarteiraDias: number
-  prazoMedioCarteiraDias: number
+  prazoMedioCarteiraDias: number | null
   il30: number | null
   il60: number | null
   il90: number | null
   il120: number | null
   il150: number | null
   il180: number | null
-  manifestoPercSemAtuacao: number
+  manifestoPercSemAtuacao: number | null
   manifestoInacessivel: number
   manifestoNaoConfirma: number
   manifestoTransacaoDesconhecida: number
   manifestoLastroInconsistente: number
   manifestoTransacaoNaoConcluida: number
-  liquidadoNoPeriodo: number
+  liquidadoNoPeriodo: number | null
   recompras: number
   motivoRecompra: string | null
-  percLiquidadoNoPrazo: number
-  atrasoMedioDias: number
+  percLiquidadoNoPrazo: number | null
+  atrasoMedioDias: number | null
   restritivos: number
   prorrogacoesAcima60d?: number | null
   operacoesMesAnterior?: number | null

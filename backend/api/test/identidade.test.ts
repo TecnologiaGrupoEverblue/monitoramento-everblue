@@ -91,6 +91,25 @@ describe.skipIf(!temBanco)('login corporativo (Entra + Intranet), como na IA Eve
     expect(Object.keys(h).map((k) => k.toLowerCase())).not.toContain('authorization')
   })
 
+  it('perfil de acesso da Intranet (accessLevel) é gravado a cada login e apagado se deixar de vir', async () => {
+    const comNivel: RespostaMe = { status: 200, corpo: { allowed: true, user: { id: 'u-1', entraObjectId: OID, department: { id: 'd-1', name: 'Risco', slug: 'risco' }, accessLevel: { code: 'Manager', name: 'Gerente' } } } }
+    const { id } = await logar(comNivel)
+    const ler = async () => (await banco.pool.query('SELECT nivel_acesso_codigo, nivel_acesso_nome FROM usuario WHERE id = $1', [id])).rows[0]
+    expect(await ler()).toEqual({ nivel_acesso_codigo: 'manager', nivel_acesso_nome: 'Gerente' })
+    restaurar()
+    await logar(permitido)
+    expect(await ler()).toEqual({ nivel_acesso_codigo: null, nivel_acesso_nome: null })
+    restaurar()
+    await logar({ status: 200, corpo: { allowed: true, accessLevel: { code: 'admin', name: 'Administrador' }, user: { id: 'u-1', entraObjectId: OID } } })
+    expect(await ler()).toEqual({ nivel_acesso_codigo: 'admin', nivel_acesso_nome: 'Administrador' })
+    restaurar()
+    await logar({ status: 200, corpo: { allowed: true, user: { id: 'u-1', entraObjectId: OID, accessLevel: 'director' } } })
+    expect(await ler()).toEqual({ nivel_acesso_codigo: 'director', nivel_acesso_nome: 'director' })
+    restaurar()
+    await logar({ status: 200, corpo: { allowed: true, user: { id: 'u-1', entraObjectId: OID, accessLevel: { code: "x'; drop", name: 'Mal' } } } })
+    expect((await ler()).nivel_acesso_codigo).toBeNull()
+  })
+
   it('token de versão anterior é apagado no login', async () => {
     const { id } = await logar(permitido)
     await banco.pool.query(`UPDATE usuario SET entra_token_cifrado = 'antigo', entra_token_expira_em = now() + interval '1 hour' WHERE id = $1`, [id])
@@ -119,14 +138,14 @@ describe.skipIf(!temBanco)('login corporativo (Entra + Intranet), como na IA Eve
 
   it('Intranet nega: recusa com sem_acesso e NADA é gravado sobre a pessoa', async () => {
     await expect(logar(negado)).rejects.toMatchObject({ codigo: 'sem_acesso', status: 403 })
-    expect((await banco.pool.query('SELECT count(*)::int n FROM usuario')).rows[0].n).toBe(0)
+    expect((await banco.pool.query(`SELECT count(*)::int n FROM usuario WHERE origem = 'entra'`)).rows[0].n).toBe(0)
     const { rows } = await banco.pool.query(`SELECT resultado FROM auditoria WHERE acao = 'login.entra'`)
     expect(rows.map((r) => r.resultado)).toEqual(['negado'])
   })
 
   it('Intranet fora do ar não vira permissão', async () => {
     await expect(logar({ status: 500, corpo: {} })).rejects.toBeInstanceOf(LoginRecusado)
-    expect((await banco.pool.query('SELECT count(*)::int n FROM usuario')).rows[0].n).toBe(0)
+    expect((await banco.pool.query(`SELECT count(*)::int n FROM usuario WHERE origem = 'entra'`)).rows[0].n).toBe(0)
   })
 
   it('state divergente é recusado antes de qualquer troca de código', async () => {

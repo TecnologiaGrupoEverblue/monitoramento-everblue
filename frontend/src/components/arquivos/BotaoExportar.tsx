@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { FileDown } from 'lucide-react'
 import type { FiltrosGlobais } from '@monitoramento/dominio'
 import { ErroApi } from '../../api/cliente'
 import { useSessao } from '../../contexts/SessaoContext'
 import { arquivoRepository, exportacaoRepository } from '../../repositories'
+import { invalidar } from '../../consultas'
 
 /**
  * Exporta com os filtros atuais. O servidor gera o arquivo, GUARDA no MinIO
@@ -11,22 +12,22 @@ import { arquivoRepository, exportacaoRepository } from '../../repositories'
  */
 export function BotaoExportar({ chave, filtros, rotulo = 'Exportar CSV' }: { chave: 'carteira' | 'planos-de-acao'; filtros: Partial<FiltrosGlobais>; rotulo?: string }) {
   const { pode } = useSessao()
-  const [estado, setEstado] = useState<'livre' | 'gerando' | 'ok' | 'erro'>('livre')
-  const [mensagem, setMensagem] = useState('')
-  if (!pode('analista')) return null
-
-  async function exportar() {
-    setEstado('gerando')
-    try {
-      const arquivo = await exportacaoRepository.exportar(chave, filtros)
+  const clienteConsultas = useQueryClient()
+  const exportacao = useMutation({
+    mutationFn: () => exportacaoRepository.exportar(chave, filtros),
+    onSuccess: (arquivo) => {
       window.location.assign(arquivoRepository.urlConteudo(arquivo.id))
-      setEstado('ok')
-      setMensagem('Exportado e guardado na Central de Arquivos.')
-    } catch (e) {
-      setEstado('erro')
-      setMensagem(e instanceof ErroApi ? e.message : 'Não foi possível exportar.')
-    }
-  }
+      void invalidar(clienteConsultas, 'arquivos')
+    },
+  })
+  if (!pode('analista')) return null
+  const estado = exportacao.isPending ? 'gerando' : exportacao.isSuccess ? 'ok' : exportacao.isError ? 'erro' : 'livre'
+  const mensagem = exportacao.isSuccess
+    ? 'Exportado e guardado na Central de Arquivos.'
+    : exportacao.error instanceof ErroApi
+      ? exportacao.error.message
+      : 'Não foi possível exportar.'
+  const exportar = () => exportacao.mutate()
 
   return (
     <span className="flex flex-col items-start gap-1 sm:items-end">

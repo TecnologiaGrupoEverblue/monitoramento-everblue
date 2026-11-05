@@ -12,6 +12,8 @@ export interface Usuario {
   ativo: boolean
   entraOid: string | null
   departamentoNome: string | null
+  nivelAcessoCodigo: string | null
+  nivelAcessoNome: string | null
 }
 
 export interface UsuarioComCredencial extends Usuario {
@@ -27,7 +29,7 @@ export interface EstadoAutorizacao {
   autorizadoEm: string | null
 }
 
-const COLUNAS = `id, email, nome, cargo, perfil, origem, ativo, entra_oid, departamento_nome`
+const COLUNAS = `id, email, nome, cargo, perfil, origem, ativo, entra_oid, departamento_nome, nivel_acesso_codigo, nivel_acesso_nome`
 
 function mapear(l: Record<string, unknown>): Usuario {
   return {
@@ -40,6 +42,8 @@ function mapear(l: Record<string, unknown>): Usuario {
     ativo: Boolean(l.ativo),
     entraOid: (l.entra_oid as string | null) ?? null,
     departamentoNome: (l.departamento_nome as string | null) ?? null,
+    nivelAcessoCodigo: (l.nivel_acesso_codigo as string | null) ?? null,
+    nivelAcessoNome: (l.nivel_acesso_nome as string | null) ?? null,
   }
 }
 
@@ -159,6 +163,12 @@ export class UsuarioRepositorio {
         WHERE id = $1`,
       [id, autorizadoPelaIntranet],
     )
+  }
+
+  /** Perfil de acesso vindo da Intranet, a cada login e revalidação. null
+   * apaga (a Intranet deixou de informar → sem acesso às áreas de gestão). */
+  async gravarNivelAcesso(id: string, nivel: { codigo: string; nome: string } | null, executor: Executor = this.db): Promise<void> {
+    await executor.query(`UPDATE usuario SET nivel_acesso_codigo = $2, nivel_acesso_nome = $3 WHERE id = $1`, [id, nivel?.codigo ?? null, nivel?.nome ?? null])
   }
 
   async marcarAutorizado(id: string, departamento: { externoId: string | null; nome: string } | null, perfilCorporativo: { nome: string; email: string; cargo: string | null } | null): Promise<void> {

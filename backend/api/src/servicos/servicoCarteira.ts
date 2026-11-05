@@ -27,6 +27,7 @@ import {
   type RegistroIasrComEventos,
   type RiscoPorDimensaoItem,
   type SnapshotSemanal,
+  STATUS_LABEL,
 } from '@monitoramento/dominio'
 import type { AlertaRepositorio } from '../repositorios/alertaRepositorio'
 import type { CadastrosRepositorio } from '../repositorios/cadastrosRepositorio'
@@ -59,7 +60,7 @@ const AGREGADOS_VAZIOS: AgregadosSemana = {
   qtdApartados: 0,
 }
 
-const ROTULO_STATUS: Record<string, string> = { NORMAL: 'Normal', MONITORAMENTO: 'Monitoramento', SAIDA_DE_RISCO: 'Saída de Risco', JURIDICO: 'Jurídico' }
+const ROTULO_STATUS: Record<string, string> = STATUS_LABEL
 
 /** O Dashboard Executivo representa a carteira sob acompanhamento do comitê —
  * nunca a base inteira. Clientes em status NORMAL só aparecem em "Risco por status". */
@@ -436,7 +437,7 @@ export class ServicoCarteira {
     // Média das últimas ~4 semanas: evita comparar a entrada mensal da conta
     // com um pico ou vale pontual da carteira.
     const janela = snapshots.slice(-4)
-    const mediaLiquidado = janela.length > 0 ? janela.reduce((soma, s) => soma + s.liquidadoNoPeriodo, 0) / janela.length : 0
+    const mediaLiquidado = janela.length > 0 ? janela.reduce((soma, s) => soma + (s.liquidadoNoPeriodo ?? 0), 0) / janela.length : 0
     const contexto = cliente && ultimo ? { riscoCliente: ultimo.riscoCliente, vencidoOficial: ultimo.vencidoOficial, liquidadoUltimoMes: mediaLiquidado } : null
     return analisarMovimentoConta(meses, contexto)
   }

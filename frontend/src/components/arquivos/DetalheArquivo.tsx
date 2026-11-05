@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useForm, useWatch } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { Archive, ArchiveRestore, Download, Eye, FileUp, History, RotateCcw, Save, Trash2, TriangleAlert } from 'lucide-react'
-import { formatarBytes, type ArquivoResumo, type EventoArquivo, type VersaoArquivo } from '@monitoramento/dominio'
+import {
+  esquemaCategoriaArquivo,
+  esquemaData,
+  esquemaEtiquetasArquivo,
+  esquemaMotivoArquivo,
+  esquemaTextoArquivo,
+  formatarBytes,
+  lerEtiquetas,
+} from '@monitoramento/dominio'
+import { consultas, invalidar } from '../../consultas'
 import { ErroApi } from '../../api/cliente'
 import { useSessao } from '../../contexts/SessaoContext'
 import { arquivoRepository } from '../../repositories'
@@ -12,67 +25,81 @@ const VISUALIZAVEIS = new Set(['application/pdf', 'image/png', 'image/jpeg', 'im
 const dataHora = (iso: string) => new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 
 type Aba = 'dados' | 'versoes' | 'trilha'
+
+/** Campos da ficha → corpo do PATCH, com as mesmas regras da API (dominio/esquemas). */
+const esquemaFormMetadados = z.object({
+  descricao: esquemaTextoArquivo.transform((v) => v || null),
+  categoria: z.string().trim().transform((v) => v || 'geral').pipe(esquemaCategoriaArquivo),
+  retencaoAte: z.union([z.literal(''), esquemaData]).transform((v) => v || null),
+  tags: z.string().transform(lerEtiquetas).pipe(esquemaEtiquetasArquivo),
+})
+type FormMetadados = z.input<typeof esquemaFormMetadados>
+type MetadadosValidados = z.output<typeof esquemaFormMetadados>
+type FormMotivo = z.input<typeof esquemaMotivoArquivo>
 type Confirmacao = { tipo: 'excluir' | 'expurgar' } | null
 
 /** Ficha do arquivo: dados, versões, trilha e todas as ações do ciclo de vida. */
 export function DetalheArquivo({ arquivoId, categorias, aoAlterar, aoFechar }: { arquivoId: string; categorias: string[]; aoAlterar: () => void; aoFechar: () => void }) {
   const { pode } = useSessao()
-  const [arquivo, setArquivo] = useState<ArquivoResumo | null>(null)
-  const [versoes, setVersoes] = useState<VersaoArquivo[]>([])
-  const [eventos, setEventos] = useState<EventoArquivo[]>([])
+  const clienteConsultas = useQueryClient()
+  const arquivoQ = useQuery(consultas.arquivo(arquivoId))
+  const versoesQ = useQuery(consultas.versoesArquivo(arquivoId))
+  const eventosQ = useQuery(consultas.eventosArquivo(arquivoId))
+  const arquivo = arquivoQ.data ?? null
+  const versoes = versoesQ.data ?? []
+  const eventos = eventosQ.data ?? []
   const [aba, setAba] = useState<Aba>('dados')
-  const [erro, setErro] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
-  const [ocupado, setOcupado] = useState(false)
   const [enviandoVersao, setEnviandoVersao] = useState(false)
   const [confirmacao, setConfirmacao] = useState<Confirmacao>(null)
-  const [motivo, setMotivo] = useState('')
-  const [edicao, setEdicao] = useState({ descricao: '', categoria: '', retencaoAte: '', tags: '' })
 
-  const carregar = useCallback(async () => {
-    const [a, v, e] = await Promise.all([arquivoRepository.obter(arquivoId), arquivoRepository.versoes(arquivoId), arquivoRepository.eventos(arquivoId)])
-    setArquivo(a)
-    setVersoes(v)
-    setEventos(e)
-    setEdicao({
-      descricao: a.descricao ?? '',
-      categoria: a.categoria,
-      retencaoAte: a.retencaoAte ?? '',
-      tags: Object.entries(a.tags).map(([k, val]) => `${k}=${val}`).join('\n'),
-    })
-  }, [arquivoId])
+  // Metadados: formulário acompanha o arquivo gravado (`values`).
+  const valoresGravados = useMemo<FormMetadados>(
+    () => ({
+      descricao: arquivo?.descricao ?? '',
+      categoria: arquivo?.categoria ?? '',
+      retencaoAte: arquivo?.retencaoAte ?? '',
+      tags: arquivo ? Object.entries(arquivo.tags).map(([k, val]) => `${k}=${val}`).join('\n') : '',
+    }),
+    [arquivo],
+  )
+  const formDados = useForm<FormMetadados, unknown, MetadadosValidados>({ resolver: zodResolver(esquemaFormMetadados), values: valoresGravados })
+  const formMotivo = useForm<FormMotivo>({ resolver: zodResolver(esquemaMotivoArquivo), defaultValues: { motivo: '' } })
+  const motivoDigitado = useWatch({ control: formMotivo.control, name: 'motivo' })
 
-  useEffect(() => {
-    carregar().catch(() => setErro('Não foi possível carregar o arquivo.'))
-  }, [carregar])
-
-  async function executar(acao: () => Promise<unknown>, mensagem: string) {
-    setErro(null)
-    setAviso(null)
-    setOcupado(true)
-    try {
-      await acao()
-      await carregar()
+  const acao = useMutation({
+    mutationFn: ({ fn }: { fn: () => Promise<unknown>; mensagem: string }) => fn(),
+    onMutate: () => setAviso(null),
+    onSuccess: (_r, { mensagem }) => {
       setAviso(mensagem)
       aoAlterar()
-    } catch (e) {
-      setErro(e instanceof ErroApi ? e.message : 'Não foi possível concluir a operação.')
-    } finally {
-      setOcupado(false)
-    }
-  }
+    },
+    onSettled: () => invalidar(clienteConsultas, 'arquivos'),
+  })
+  const ocupado = acao.isPending
+  const erro = arquivoQ.isError
+    ? 'Não foi possível carregar o arquivo.'
+    : acao.error
+      ? acao.error instanceof ErroApi
+        ? acao.error.message
+        : 'Não foi possível concluir a operação.'
+      : null
+  const executar = (fn: () => Promise<unknown>, mensagem: string) => acao.mutate({ fn, mensagem })
 
-  function salvarDados() {
-    const tags: Record<string, string> = {}
-    for (const linha of edicao.tags.split('\n')) {
-      const [k, ...resto] = linha.split('=')
-      if (k?.trim()) tags[k.trim()] = resto.join('=').trim()
-    }
-    return executar(
-      () => arquivoRepository.atualizar(arquivoId, { descricao: edicao.descricao.trim() || null, categoria: edicao.categoria.trim() || 'geral', retencaoAte: edicao.retencaoAte || null, tags }),
-      'Dados do arquivo salvos.',
+  const salvarDados = formDados.handleSubmit((d) =>
+    executar(() => arquivoRepository.atualizar(arquivoId, d), 'Dados do arquivo salvos.'),
+  )
+  const confirmar = formMotivo.handleSubmit(({ motivo }) => {
+    if (!confirmacao || !arquivo) return
+    const tipo = confirmacao.tipo
+    setConfirmacao(null)
+    formMotivo.reset({ motivo: '' })
+    executar(
+      () => (tipo === 'excluir' ? arquivoRepository.excluir(arquivo.id, motivo) : arquivoRepository.expurgar(arquivo.id, motivo)),
+      tipo === 'excluir' ? 'Arquivo excluído. Ele pode ser reativado a qualquer momento.' : 'Conteúdo expurgado do MinIO. Os dados e a trilha continuam registrados.',
     )
-  }
+  })
+  const erroDados = (Object.values(formDados.formState.errors)[0] as { message?: string } | undefined)?.message
 
   if (!arquivo) {
     return (
@@ -199,11 +226,11 @@ export function DetalheArquivo({ arquivoId, categorias, aoAlterar, aoFechar }: {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="flex flex-col gap-1 text-sm sm:col-span-2">
                 <span style={{ color: 'var(--cor-texto-secundario)' }}>Descrição</span>
-                <textarea rows={2} maxLength={2000} value={edicao.descricao} disabled={!editavel} onChange={(e) => setEdicao({ ...edicao, descricao: e.target.value })} />
+                <textarea rows={2} maxLength={2000} {...formDados.register('descricao')} disabled={!editavel} />
               </label>
               <label className="flex flex-col gap-1 text-sm">
                 <span style={{ color: 'var(--cor-texto-secundario)' }}>Categoria</span>
-                <input list="categorias-detalhe" maxLength={80} value={edicao.categoria} disabled={!editavel} onChange={(e) => setEdicao({ ...edicao, categoria: e.target.value })} />
+                <input list="categorias-detalhe" maxLength={80} {...formDados.register('categoria')} disabled={!editavel} />
                 <datalist id="categorias-detalhe">
                   {categorias.map((c) => (
                     <option key={c} value={c} />
@@ -212,16 +239,21 @@ export function DetalheArquivo({ arquivoId, categorias, aoAlterar, aoFechar }: {
               </label>
               <label className="flex flex-col gap-1 text-sm">
                 <span style={{ color: 'var(--cor-texto-secundario)' }}>Reter até (bloqueia o expurgo)</span>
-                <input type="date" value={edicao.retencaoAte} disabled={!editavel} onChange={(e) => setEdicao({ ...edicao, retencaoAte: e.target.value })} />
+                <input type="date" {...formDados.register('retencaoAte')} aria-invalid={Boolean(formDados.formState.errors.retencaoAte)} disabled={!editavel} />
               </label>
               <label className="flex flex-col gap-1 text-sm sm:col-span-2">
                 <span style={{ color: 'var(--cor-texto-secundario)' }}>Etiquetas (uma por linha, no formato chave=valor)</span>
-                <textarea rows={3} className="font-mono text-xs" value={edicao.tags} disabled={!editavel} onChange={(e) => setEdicao({ ...edicao, tags: e.target.value })} />
+                <textarea rows={3} className="font-mono text-xs" {...formDados.register('tags')} aria-invalid={Boolean(formDados.formState.errors.tags)} disabled={!editavel} />
               </label>
             </div>
+            {erroDados && (
+              <p role="alert" className="text-xs" style={{ color: 'var(--cor-critico)' }}>
+                {erroDados}
+              </p>
+            )}
             {editavel && (
               <div className="flex justify-end">
-                <button type="button" className="botao-primario" disabled={ocupado} onClick={salvarDados}>
+                <button type="button" className="botao-primario" disabled={ocupado || !formDados.formState.isDirty} onClick={() => void salvarDados()}>
                   <Save className="h-4 w-4" /> Salvar dados
                 </button>
               </div>
@@ -285,9 +317,9 @@ export function DetalheArquivo({ arquivoId, categorias, aoAlterar, aoFechar }: {
           categorias={categorias}
           novaVersaoDe={arquivo}
           aoFechar={() => setEnviandoVersao(false)}
-          aoConcluir={async () => {
+          aoConcluir={() => {
             setEnviandoVersao(false)
-            await carregar()
+            void invalidar(clienteConsultas, 'arquivos')
             setAviso('Nova versão enviada.')
             aoAlterar()
           }}
@@ -308,16 +340,8 @@ export function DetalheArquivo({ arquivoId, categorias, aoAlterar, aoFechar }: {
                 type="button"
                 className="botao-primario"
                 style={confirmacao.tipo === 'expurgar' ? { background: 'var(--cor-critico)' } : undefined}
-                disabled={motivo.trim().length < 5 || ocupado}
-                onClick={async () => {
-                  const tipo = confirmacao.tipo
-                  setConfirmacao(null)
-                  await executar(
-                    () => (tipo === 'excluir' ? arquivoRepository.excluir(arquivo.id, motivo.trim()) : arquivoRepository.expurgar(arquivo.id, motivo.trim())),
-                    tipo === 'excluir' ? 'Arquivo excluído. Ele pode ser reativado a qualquer momento.' : 'Conteúdo expurgado do MinIO. Os dados e a trilha continuam registrados.',
-                  )
-                  setMotivo('')
-                }}
+                disabled={motivoDigitado.trim().length < 5 || ocupado}
+                onClick={() => void confirmar()}
               >
                 {confirmacao.tipo === 'excluir' ? 'Excluir' : 'Expurgar'}
               </button>
@@ -331,7 +355,12 @@ export function DetalheArquivo({ arquivoId, categorias, aoAlterar, aoFechar }: {
           </p>
           <label className="flex flex-col gap-1 text-sm">
             <span>Motivo (obrigatório)</span>
-            <textarea rows={3} maxLength={500} value={motivo} autoFocus onChange={(e) => setMotivo(e.target.value)} />
+            <textarea rows={3} maxLength={500} {...formMotivo.register('motivo')} autoFocus aria-invalid={Boolean(formMotivo.formState.errors.motivo)} />
+            {formMotivo.formState.errors.motivo && (
+              <span className="text-xs" style={{ color: 'var(--cor-critico)' }}>
+                {formMotivo.formState.errors.motivo.message}
+              </span>
+            )}
           </label>
         </Modal>
       )}

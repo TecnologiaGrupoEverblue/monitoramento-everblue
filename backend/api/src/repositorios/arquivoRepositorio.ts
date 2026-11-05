@@ -197,6 +197,17 @@ export class ArquivoRepositorio {
     )
   }
 
+  /** Leitura bruta de foto do Bitfin protegida (permanente ou com menos de 90
+   * dias) — a mesma regra do gatilho `arquivo_foto_protegido` (migração 0012). */
+  async protegidoPorFoto(arquivoId: string, executor: Executor = this.db): Promise<boolean> {
+    const { rows } = await executor.query(
+      `SELECT EXISTS (SELECT 1 FROM foto_execucao f WHERE f.arquivo_id = $1
+                        AND (foto_permanente(f.id) OR f.iniciado_em >= now() - interval '90 days')) AS protegido`,
+      [arquivoId],
+    )
+    return Boolean(rows[0]?.protegido)
+  }
+
   async atualizarMetadados(
     arquivoId: string,
     dados: { descricao?: string | null; categoria?: string; tags?: Record<string, string>; retencaoAte?: string | null; recursoTipo?: string | null; recursoId?: string | null },

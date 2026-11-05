@@ -9,7 +9,7 @@ import { Painel } from '../ui/Card'
 export default function PainelClassificacao({ historico, semanaRef }: { historico: ClassificacaoSemanal[]; semanaRef: string | null }) {
   const atual = (semanaRef ? historico.find((c) => c.semanaRef === semanaRef) : null) ?? historico[historico.length - 1] ?? null
   return (
-    <Painel titulo="Classificação semanal — regras do comitê" className="lg:col-span-2">
+    <Painel titulo="Classificação semanal — regras do comitê" className="xl:col-span-2">
       {!atual ? (
         <p className="py-4 text-center text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
           Ainda sem classificação: ela é calculada na confirmação da próxima importação semanal.
@@ -42,7 +42,7 @@ export default function PainelClassificacao({ historico, semanaRef }: { historic
               {atual.alertas.map((a, i) => (
                 <li key={i} className="flex items-start gap-2 text-sm">
                   <span
-                    className="mt-0.5 shrink-0 border-l-2 px-1.5 text-[10px] font-bold"
+                    className="mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold"
                     style={{
                       color: a.nivel === 'CRITICO' ? 'var(--cor-critico)' : 'var(--cor-atencao)',
                       backgroundColor: a.nivel === 'CRITICO' ? 'var(--cor-critico-fundo)' : 'var(--cor-atencao-fundo)',

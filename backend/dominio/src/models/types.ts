@@ -7,7 +7,7 @@
  * nunca do Dexie diretamente.
  */
 
-export type StatusCliente = 'NORMAL' | 'MONITORAMENTO' | 'SAIDA_DE_RISCO' | 'JURIDICO'
+export type StatusCliente = 'NORMAL' | 'MONITORAMENTO' | 'SAIDA_DE_RISCO' | 'RECUPERACAO_DE_CREDITO' | 'JURIDICO'
 
 export type Prioridade = 'BAIXA' | 'MEDIA' | 'ALTA'
 
@@ -105,7 +105,8 @@ export interface SnapshotSemanal {
   vencidoOficial: number
   vencidoDesde: string | null
   agingCarteiraDias: number
-  prazoMedioCarteiraDias: number
+  /** `null` = não informado pela fonte (1.2: nunca 0 no lugar de ausente). */
+  prazoMedioCarteiraDias: number | null
 
   // Liquidez (IL = índice de liquidez, % da carteira liquidada dentro do prazo).
   // `null` = janela sem base (sem título vencendo no período) — ausência de
@@ -118,7 +119,8 @@ export interface SnapshotSemanal {
   il180: number | null
 
   // Manifestos / qualidade do recebível (R$)
-  manifestoPercSemAtuacao: number
+  /** `null` = não informado pela fonte (1.2: nunca 0 no lugar de ausente). */
+  manifestoPercSemAtuacao: number | null
   manifestoInacessivel: number
   manifestoNaoConfirma: number
   manifestoTransacaoDesconhecida: number
@@ -126,11 +128,14 @@ export interface SnapshotSemanal {
   manifestoTransacaoNaoConcluida: number
 
   // Performance da carteira
-  liquidadoNoPeriodo: number
+  /** `null` = não informado pela fonte (1.2: nunca 0 no lugar de ausente). */
+  liquidadoNoPeriodo: number | null
   recompras: number
   motivoRecompra: string | null
-  percLiquidadoNoPrazo: number
-  atrasoMedioDias: number
+  /** `null` = o Bitfin não tem pontualidade do mês fechado (sem título esperado). */
+  percLiquidadoNoPrazo: number | null
+  /** `null` = não informado pela fonte (1.2: nunca 0 no lugar de ausente). */
+  atrasoMedioDias: number | null
 
   /** Prorrogações acima de 60 dias (R$); `null` quando a importação não trouxe. */
   prorrogacoesAcima60d?: number | null

@@ -3,20 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Tipos, regras de neg\u00f3cio puras e contratos compartilhados entre API e interface.",
+  "description": "Tipos, regras de negócio puras e contratos compartilhados entre API e interface.",
   "exports": {
     ".": "./src/index.ts",
     "./fixtures": "./src/fixtures/gerarDadosFicticios.ts"
   },
   "dependencies": {
-    "date-fns": "^4.4.0"
+    "date-fns": "4.4.0",
+    "zod": "4.6.7"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
-    "vitest": "^3.2.4"
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
   }
 }

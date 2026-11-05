@@ -1,51 +1,35 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { FILTROS_VAZIOS } from '../../repositories'
+import { consultas } from '../../consultas'
+import { Portal } from './Portal'
+import { TabelaResponsiva } from './TabelaResponsiva'
+import { NomeCliente } from './NomeCliente'
 import type { ClienteEnriquecido } from '../../models/types'
-import { cadastrosRepository, clienteRepository, snapshotRepository } from '../../repositories'
 import { formatarMoeda, formatarPercentual } from '../../utils/formatters'
 import { CriticidadeBadge, StatusBadge } from './Badges'
 
 export default function DrillDownModal({ titulo, clienteIds, aoFechar }: { titulo: string; clienteIds: string[]; aoFechar: () => void }) {
-  const [clientes, setClientes] = useState<ClienteEnriquecido[] | null>(null)
   const navigate = useNavigate()
+  // Uma chamada só (última semana com posição), em vez de uma por cliente.
+  const q = useQuery(consultas.clientesEnriquecidos(FILTROS_VAZIOS))
+  const clientes = useMemo(() => {
+    if (!q.data) return null
+    const ids = new Set(clienteIds)
+    return q.data.filter((c) => ids.has(c.id)).sort((a, b) => (b.snapshotAtual?.riscoCliente ?? 0) - (a.snapshotAtual?.riscoCliente ?? 0))
+  }, [q.data, clienteIds])
 
   useEffect(() => {
-    let ativo = true
-    async function carregar() {
-      const [todos, grupos, gerentes, plataformas, semanaRef] = await Promise.all([
-        clienteRepository.listarTodos(),
-        cadastrosRepository.mapaGrupos(),
-        cadastrosRepository.mapaGerentes(),
-        cadastrosRepository.mapaPlataformas(),
-        snapshotRepository.ultimaSemanaDisponivel(),
-      ])
-      const idsSet = new Set(clienteIds)
-      const selecionados = todos.filter((c) => idsSet.has(c.id))
-      const resultado: ClienteEnriquecido[] = []
-      for (const cliente of selecionados) {
-        const snapshotAtual = semanaRef ? await snapshotRepository.porClienteESemana(cliente.id, semanaRef) : null
-        resultado.push({
-          ...cliente,
-          grupoEconomico: grupos.get(cliente.grupoEconomicoId)!,
-          gerente: gerentes.get(cliente.gerenteId)!,
-          plataforma: plataformas.get(cliente.plataformaId)!,
-          snapshotAtual,
-          snapshotAnterior: null,
-          alertasAbertos: [],
-          planosPendentes: [],
-        })
-      }
-      if (ativo) setClientes(resultado.sort((a, b) => (b.snapshotAtual?.riscoCliente ?? 0) - (a.snapshotAtual?.riscoCliente ?? 0)))
-    }
-    carregar()
-    return () => {
-      ativo = false
-    }
-  }, [clienteIds])
+    const tecla = (e: KeyboardEvent) => e.key === 'Escape' && aoFechar()
+    document.addEventListener('keydown', tecla)
+    return () => document.removeEventListener('keydown', tecla)
+  }, [aoFechar])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={aoFechar}>
-      <div className="flex max-h-[80vh] w-full max-w-4xl flex-col border bg-[var(--cor-superficie-solida)]" style={{ borderColor: 'var(--cor-borda-forte)' }} onClick={(e) => e.stopPropagation()}>
+    <Portal>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={aoFechar}>
+      <div role="dialog" aria-modal="true" aria-label={titulo} className="flex max-h-[92dvh] w-full max-w-4xl flex-col rounded-t-2xl border bg-[var(--cor-superficie-solida)] sm:rounded-2xl" style={{ borderColor: 'var(--cor-borda-forte)' }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b p-4" style={{ borderColor: 'var(--cor-borda)' }}>
           <div>
             <h2 className="fonte-editorial text-lg font-semibold" style={{ color: 'var(--cor-primaria)' }}>
@@ -55,69 +39,52 @@ export default function DrillDownModal({ titulo, clienteIds, aoFechar }: { titul
               {clienteIds.length} cliente(s)
             </p>
           </div>
-          <button onClick={aoFechar} className="px-2 py-1 text-sm hover:bg-[var(--cor-fundo-recuado)]" aria-label="Fechar">
+          <button onClick={aoFechar} className="flex h-11 w-11 items-center justify-center rounded-lg text-sm hover:bg-[var(--cor-fundo-recuado)]" aria-label="Fechar">
             ✕
           </button>
         </div>
-        <div className="overflow-auto">
-          <table className="w-full text-[13px]">
-            <thead className="sticky top-0 border-b bg-[var(--cor-superficie-solida)] text-[12.5px] font-medium" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda-forte)' }}>
-              <tr>
-                <th className="px-4 py-2 text-left">Cliente</th>
-                <th className="px-4 py-2 text-left">Grupo</th>
-                <th className="px-4 py-2 text-left">Gerente</th>
-                <th className="px-4 py-2 text-left">Status</th>
-                <th className="px-4 py-2 text-left">Criticidade</th>
-                <th className="px-4 py-2 text-right">Risco</th>
-                <th className="px-4 py-2 text-right">% Vencido</th>
-              </tr>
-            </thead>
-            <tbody>
-              {clientes === null && (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-sm text-gray-500">
-                    Carregando…
-                  </td>
-                </tr>
-              )}
-              {clientes?.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-sm text-gray-500">
-                    Nenhum cliente encontrado para este recorte.
-                  </td>
-                </tr>
-              )}
-              {clientes?.map((c) => {
-                const risco = c.snapshotAtual?.riscoCliente ?? 0
-                const percVencido = c.snapshotAtual && c.snapshotAtual.riscoCliente > 0 ? (c.snapshotAtual.vencidoOficial / c.snapshotAtual.riscoCliente) * 100 : 0
-                return (
-                  <tr
-                    key={c.id}
-                    className="cursor-pointer border-t hover:bg-[var(--cor-fundo-recuado)]"
-                    style={{ borderColor: 'var(--cor-borda)' }}
-                    onClick={() => {
-                      navigate(`/clientes/${c.id}`)
-                      aoFechar()
-                    }}
-                  >
-                    <td className="px-4 py-2 font-medium">{c.nome}</td>
-                    <td className="px-4 py-2" style={{ color: 'var(--cor-texto-secundario)' }}>{c.grupoEconomico?.nome}</td>
-                    <td className="px-4 py-2" style={{ color: 'var(--cor-texto-secundario)' }}>{c.gerente?.nome}</td>
-                    <td className="px-4 py-2">
-                      <StatusBadge status={c.status} />
-                    </td>
-                    <td className="px-4 py-2">
-                      <CriticidadeBadge criticidade={c.criticidade} />
-                    </td>
-                    <td className="numeros-tabulares px-4 py-2 text-right font-medium">{formatarMoeda(risco)}</td>
-                    <td className="numeros-tabulares px-4 py-2 text-right">{formatarPercentual(percVencido)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div className="overflow-auto p-3">
+          {q.isError ? (
+            <p className="p-6 text-center text-sm" role="alert" style={{ color: 'var(--cor-critico)' }}>
+              Não foi possível carregar os clientes.{' '}
+              <button type="button" className="underline" onClick={() => void q.refetch()}>
+                Tentar de novo
+              </button>
+            </p>
+          ) : clientes === null ? (
+            <p className="p-6 text-center text-sm" role="status" style={{ color: 'var(--cor-texto-secundario)' }}>
+              Carregando…
+            </p>
+          ) : (
+            <TabelaResponsiva<ClienteEnriquecido>
+              rotulo={titulo}
+              linhas={clientes}
+              chave={(c) => c.id}
+              vazio="Nenhum cliente encontrado para este recorte."
+              aoClicar={(c) => {
+                navigate(`/clientes/${c.id}`)
+                aoFechar()
+              }}
+              colunas={[
+                { chave: 'cliente', titulo: 'Cliente', principal: true, classe: 'min-w-[170px]', render: (c) => <NomeCliente nome={c.nome} documento={c.cnpj} /> },
+                { chave: 'grupo', titulo: 'Grupo', ocultar: 'lg', render: (c) => <span style={{ color: 'var(--cor-texto-secundario)' }}>{c.grupoEconomico?.nome}</span> },
+                { chave: 'gerente', titulo: 'Gerente', render: (c) => <span style={{ color: 'var(--cor-texto-secundario)' }}>{c.gerente?.nome}</span> },
+                { chave: 'status', titulo: 'Status', render: (c) => <StatusBadge status={c.status} /> },
+                { chave: 'crit', titulo: 'Criticidade', render: (c) => <CriticidadeBadge criticidade={c.criticidade} /> },
+                { chave: 'risco', titulo: 'Risco', alinhar: 'right', classe: 'numeros-tabulares whitespace-nowrap font-medium', render: (c) => formatarMoeda(c.snapshotAtual?.riscoCliente ?? 0) },
+                {
+                  chave: 'venc',
+                  titulo: '% Vencido',
+                  alinhar: 'right',
+                  classe: 'numeros-tabulares',
+                  render: (c) => formatarPercentual(c.snapshotAtual && c.snapshotAtual.riscoCliente > 0 ? (c.snapshotAtual.vencidoOficial / c.snapshotAtual.riscoCliente) * 100 : 0),
+                },
+              ]}
+            />
+          )}
         </div>
       </div>
     </div>
+    </Portal>
   )
 }

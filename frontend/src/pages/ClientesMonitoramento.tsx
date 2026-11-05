@@ -1,33 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import BotaoModoRevisao from '../components/BotaoModoRevisao'
 import ClientesTabela from '../components/ClientesTabela'
 import ResumoChecklistBadge from '../components/ResumoChecklistBadge'
 import { Painel } from '../components/ui/Card'
+import { Carregando, ErroCarga } from '../components/ui/EstadoCarga'
 import { BotaoExportar } from '../components/arquivos/BotaoExportar'
 import { useFiltros } from '../contexts/FiltrosContext'
-import type { ClienteEnriquecido } from '../models/types'
-import { clienteRepository } from '../repositories'
+import { consultas } from '../consultas'
 import { formatarMoeda } from '../utils/formatters'
 
 export default function ClientesMonitoramento() {
   const { filtros, carregando: carregandoFiltros } = useFiltros()
-  const [clientes, setClientes] = useState<ClienteEnriquecido[]>([])
-  const [carregando, setCarregando] = useState(true)
-
-  const carregar = useCallback(() => {
-    setCarregando(true)
-    return clienteRepository.listarEnriquecidos({ ...filtros, status: 'MONITORAMENTO' }).then((lista) => {
-      setClientes(lista)
-      setCarregando(false)
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtros])
-
-  useEffect(() => {
-    if (carregandoFiltros) return
-    carregar()
-  }, [carregandoFiltros, carregar])
-
+  const consulta = useQuery({ ...consultas.clientesEnriquecidos({ ...filtros, status: 'MONITORAMENTO' }), enabled: !carregandoFiltros })
+  const clientes = consulta.data ?? []
   const riscoTotal = clientes.reduce((s, c) => s + (c.snapshotAtual?.riscoCliente ?? 0), 0)
 
   return (
@@ -43,12 +28,14 @@ export default function ClientesMonitoramento() {
         </div>
         <div className="flex flex-wrap items-start gap-2">
           <BotaoExportar chave="carteira" filtros={{ ...filtros, status: 'MONITORAMENTO' }} />
-          <BotaoModoRevisao clientes={clientes} statusAtual="MONITORAMENTO" aoConcluir={carregar} />
+          <BotaoModoRevisao clientes={clientes} statusAtual="MONITORAMENTO" />
         </div>
       </div>
       <Painel>
-        {carregando ? (
-          <p className="p-6 text-sm text-gray-500">Carregando…</p>
+        {consulta.isError ? (
+          <ErroCarga erro={consulta.error} aoTentarDeNovo={() => void consulta.refetch()} />
+        ) : consulta.isPending ? (
+          <Carregando />
         ) : (
           <ClientesTabela
             clientes={clientes}

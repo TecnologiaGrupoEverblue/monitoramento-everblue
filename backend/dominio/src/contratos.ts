@@ -41,6 +41,10 @@ export interface SessaoUsuario {
   departamento: string | null
   origem: 'entra' | 'local'
   temFoto: boolean
+  /** Perfil de acesso da Intranet (accessLevel); null se a Intranet não informou. */
+  nivelAcesso: { codigo: string; nome: string } | null
+  /** Vê e usa Foto do Bitfin, Mapa de Garantias e Parâmetros (decidido no servidor). */
+  acessoGestao: boolean
 }
 
 export interface ModoAutenticacao {
@@ -186,13 +190,15 @@ export interface PreviewImportacao {
   colunasFaltando: string[]
   linhasComErro: LinhaComErro[]
   /** Layout recebido: modelo oficial ou base do comitê (convertida). */
-  formato?: 'MODELO' | 'BASE_COMITE'
+  formato?: 'MODELO' | 'BASE_COMITE' | 'BITFIN'
   /** Resumo da conversão da base do comitê (aba, cabeçalho, colunas não importadas). */
   observacoes?: string[]
   totais: {
     totalLinhasValidas: number
     linhasProntas: number
     linhasJaImportadas: number
+    /** Foto com substituição (ADR-023): clientes cuja posição desta semana será trocada. */
+    posicoesSubstituidas?: number
     clientesNovos: number
     clientesAtualizados: number
     deltaRiscoTotal: number
@@ -210,6 +216,8 @@ export interface ResultadoConfirmacaoImportacao {
   snapshotsGravados: number
   clientesCriados: number
   alertasGerados: number
+  /** Posições da mesma semana trocadas por esta (ADR-023). */
+  posicoesSubstituidas?: number
 }
 
 // ------------------------------------------------------------------ erros

@@ -1,6 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { FileUp } from 'lucide-react'
-import { ARQUIVOS_MAX_MB_PADRAO, EXTENSOES_SEMPRE_BLOQUEADAS, FINALIDADES_ARQUIVO, formatarBytes, motivoRecusaArquivo, type ArquivoResumo, type FinalidadeArquivo, type PoliticaArquivos } from '@monitoramento/dominio'
+import {
+  ARQUIVOS_MAX_MB_PADRAO,
+  EXTENSOES_SEMPRE_BLOQUEADAS,
+  FINALIDADES_ARQUIVO,
+  esquemaCategoriaArquivo,
+  esquemaData,
+  esquemaTextoArquivo,
+  formatarBytes,
+  motivoRecusaArquivo,
+  type ArquivoResumo,
+  type FinalidadeArquivo,
+  type PoliticaArquivos,
+} from '@monitoramento/dominio'
+import { consultas } from '../../consultas'
 import { ErroApi } from '../../api/cliente'
 import { arquivoRepository } from '../../repositories'
 import { Modal } from '../ui/Modal'
@@ -13,6 +30,17 @@ import { ROTULO_FINALIDADE } from './rotulos'
  * final é da API, que também confere o conteúdo.
  */
 const POLITICA_PADRAO: PoliticaArquivos = { maxBytes: ARQUIVOS_MAX_MB_PADRAO * 1048576, extensoesBloqueadas: [...EXTENSOES_SEMPRE_BLOQUEADAS] }
+
+/** Dados do envio, com as regras da API (dominio/esquemas). */
+const esquemaFormEnvio = z.object({
+  finalidade: z.enum(FINALIDADES_ARQUIVO as [FinalidadeArquivo, ...FinalidadeArquivo[]]),
+  categoria: z.string().trim().transform((v) => v || 'geral').pipe(esquemaCategoriaArquivo),
+  descricao: esquemaTextoArquivo.transform((v) => v || undefined),
+  retencaoAte: z.union([z.literal(''), esquemaData]).transform((v) => v || undefined),
+  comentario: esquemaTextoArquivo,
+})
+type FormEnvio = z.input<typeof esquemaFormEnvio>
+type EnvioValidado = z.output<typeof esquemaFormEnvio>
 
 export function EnvioArquivo({
   categorias,
@@ -27,22 +55,16 @@ export function EnvioArquivo({
   aoFechar: () => void
 }) {
   const [arquivo, setArquivo] = useState<File | null>(null)
-  const [finalidade, setFinalidade] = useState<FinalidadeArquivo>('anexo')
-  const [categoria, setCategoria] = useState('')
-  const [descricao, setDescricao] = useState('')
-  const [retencaoAte, setRetencaoAte] = useState('')
-  const [comentario, setComentario] = useState('')
   const [progresso, setProgresso] = useState<number | null>(null)
   const [erro, setErro] = useState<string | null>(null)
   const cancelamento = useRef<AbortController | null>(null)
-  const [politica, setPolitica] = useState<PoliticaArquivos>(POLITICA_PADRAO)
-  useEffect(() => {
-    let ativo = true
-    arquivoRepository.politica().then((p) => ativo && setPolitica(p)).catch(() => undefined) // sem resposta: vale o padrão; a API decide
-    return () => {
-      ativo = false
-    }
-  }, [])
+  // Sem resposta, vale o padrão: a API decide de qualquer forma.
+  const politica = useQuery(consultas.politicaArquivos()).data ?? POLITICA_PADRAO
+  const { register, handleSubmit, formState } = useForm<FormEnvio, unknown, EnvioValidado>({
+    resolver: zodResolver(esquemaFormEnvio),
+    defaultValues: { finalidade: 'anexo', categoria: '', descricao: '', retencaoAte: '', comentario: '' },
+  })
+  const erroCampo = (Object.values(formState.errors)[0] as { message?: string } | undefined)?.message
 
   function escolher(f: File | null) {
     setArquivo(f)
@@ -50,7 +72,7 @@ export function EnvioArquivo({
   }
   const recusado = !!arquivo && motivoRecusaArquivo(arquivo.name, arquivo.size, politica) !== null
 
-  async function enviar() {
+  async function enviarValidado({ finalidade, categoria, descricao, retencaoAte, comentario }: EnvioValidado) {
     if (!arquivo) return
     setErro(null)
     setProgresso(0)
@@ -60,7 +82,7 @@ export function EnvioArquivo({
         ? await arquivoRepository.novaVersao(novaVersaoDe.id, arquivo, comentario, setProgresso, cancelamento.current.signal)
         : await arquivoRepository.enviar(
             arquivo,
-            { finalidade, categoria: categoria.trim() || 'geral', descricao: descricao.trim() || undefined, retencaoAte: retencaoAte || undefined },
+            { finalidade, categoria, descricao, retencaoAte },
             setProgresso,
             cancelamento.current.signal,
           )
@@ -71,6 +93,7 @@ export function EnvioArquivo({
       setErro(e instanceof ErroApi ? e.message : 'Não foi possível enviar o arquivo.')
     }
   }
+  const enviar = () => handleSubmit(enviarValidado)()
 
   const enviando = progresso !== null
   const titulo = novaVersaoDe ? 'Enviar nova versão' : 'Enviar arquivo'
@@ -85,7 +108,7 @@ export function EnvioArquivo({
           <button type="button" className="botao-secundario" onClick={enviando ? () => cancelamento.current?.abort() : aoFechar}>
             {enviando ? 'Cancelar envio' : 'Fechar'}
           </button>
-          <button type="button" className="botao-primario" disabled={!arquivo || enviando || recusado} onClick={enviar}>
+          <button type="button" className="botao-primario" disabled={!arquivo || enviando || recusado} onClick={() => void enviar()}>
             <FileUp className="h-4 w-4" /> {enviando ? `Enviando ${Math.round((progresso ?? 0) * 100)}%` : 'Enviar'}
           </button>
         </>
@@ -124,13 +147,13 @@ export function EnvioArquivo({
         {novaVersaoDe ? (
           <label className="flex flex-col gap-1 text-sm">
             <span style={{ color: 'var(--cor-texto-secundario)' }}>O que mudou nesta versão (opcional)</span>
-            <textarea rows={2} maxLength={2000} value={comentario} onChange={(e) => setComentario(e.target.value)} disabled={enviando} />
+            <textarea rows={2} maxLength={2000} {...register('comentario')} disabled={enviando} />
           </label>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm">
               <span style={{ color: 'var(--cor-texto-secundario)' }}>Finalidade</span>
-              <select value={finalidade} onChange={(e) => setFinalidade(e.target.value as FinalidadeArquivo)} disabled={enviando}>
+              <select {...register('finalidade')} disabled={enviando}>
                 {FINALIDADES_ARQUIVO.map((f) => (
                   <option key={f} value={f}>
                     {ROTULO_FINALIDADE[f]}
@@ -140,7 +163,7 @@ export function EnvioArquivo({
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span style={{ color: 'var(--cor-texto-secundario)' }}>Categoria</span>
-              <input list="categorias-arquivo" value={categoria} maxLength={80} placeholder="ex.: contratos, extratos, atas" onChange={(e) => setCategoria(e.target.value)} disabled={enviando} />
+              <input list="categorias-arquivo" {...register('categoria')} maxLength={80} placeholder="ex.: contratos, extratos, atas" disabled={enviando} />
               <datalist id="categorias-arquivo">
                 {categorias.map((c) => (
                   <option key={c} value={c} />
@@ -149,15 +172,20 @@ export function EnvioArquivo({
             </label>
             <label className="flex flex-col gap-1 text-sm sm:col-span-2">
               <span style={{ color: 'var(--cor-texto-secundario)' }}>Descrição (opcional)</span>
-              <textarea rows={2} maxLength={2000} value={descricao} onChange={(e) => setDescricao(e.target.value)} disabled={enviando} />
+              <textarea rows={2} maxLength={2000} {...register('descricao')} disabled={enviando} />
             </label>
             <label className="flex flex-col gap-1 text-sm">
               <span style={{ color: 'var(--cor-texto-secundario)' }}>Reter até (opcional)</span>
-              <input type="date" value={retencaoAte} onChange={(e) => setRetencaoAte(e.target.value)} disabled={enviando} />
+              <input type="date" {...register('retencaoAte')} aria-invalid={Boolean(formState.errors.retencaoAte)} disabled={enviando} />
             </label>
           </div>
         )}
 
+        {erroCampo && (
+          <p role="alert" className="text-xs" style={{ color: 'var(--cor-critico)' }}>
+            {erroCampo}
+          </p>
+        )}
         {erro && (
           <p role="alert" className="rounded-lg px-3 py-2 text-sm" style={{ color: 'var(--cor-critico)', background: 'var(--cor-critico-fundo)' }}>
             {erro}

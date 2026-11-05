@@ -64,6 +64,9 @@ export interface ArmazenamentoArquivos {
   remover(chave: string): Promise<void>
   /** Remove TODAS as versões e marcadores do objeto — irreversível. */
   removerDefinitivo(chave: string): Promise<number>
+  /** Conta (simular) ou remove TODAS as versões e marcadores do bucket —
+   * irreversível. Usado só pela limpeza total (`zerar-dados`). */
+  esvaziarBucket(simular: boolean, aoListar?: (chave: string, versao: string | null) => void): Promise<{ chaves: number; versoes: number }>
   verificarDisponibilidade(): Promise<boolean>
 }
 
@@ -216,6 +219,40 @@ export class ArmazenamentoS3 implements ArmazenamentoArquivos {
     return removidos
   }
 
+  async esvaziarBucket(simular: boolean, aoListar?: (chave: string, versao: string | null) => void): Promise<{ chaves: number; versoes: number }> {
+    const chaves = new Set<string>()
+    let versoes = 0
+    let marcadorChave: string | undefined
+    let marcadorVersao: string | undefined
+    for (;;) {
+      const pagina = await this.cliente.send(
+        new ListObjectVersionsCommand({ Bucket: this.opcoes.bucket, KeyMarker: marcadorChave, VersionIdMarker: marcadorVersao, MaxKeys: 1000 }),
+      )
+      const alvos = [...(pagina.Versions ?? []), ...(pagina.DeleteMarkers ?? [])]
+        .filter((v) => v.Key)
+        .map((v) => ({ Key: v.Key!, VersionId: v.VersionId ?? undefined }))
+      for (const a of alvos) {
+        chaves.add(a.Key)
+        aoListar?.(a.Key, a.VersionId ?? null)
+      }
+      versoes += alvos.length
+      if (!simular && alvos.length > 0) {
+        const r = await this.cliente.send(new DeleteObjectsCommand({ Bucket: this.opcoes.bucket, Delete: { Objects: alvos, Quiet: true } }))
+        if (r.Errors && r.Errors.length > 0) {
+          const e = r.Errors[0]!
+          throw new Error(`MinIO recusou a exclusão de ${r.Errors.length} versão(ões) (ex.: ${e.Key}: ${e.Code ?? 'erro'}). Object Lock/retenção ativa?`)
+        }
+      }
+      if (!pagina.IsTruncated) break
+      // Excluindo, a próxima página recomeça do início (a anterior sumiu);
+      // simulando, segue os marcadores.
+      if (simular) {
+        marcadorChave = pagina.NextKeyMarker
+        marcadorVersao = pagina.NextVersionIdMarker
+      }
+    }
+    return { chaves: chaves.size, versoes }
+  }
   async verificarDisponibilidade(): Promise<boolean> {
     try {
       return await this.bucketExiste()
@@ -294,6 +331,16 @@ export class ArmazenamentoMemoria implements ArmazenamentoArquivos {
     const n = this.versoes.get(chave)?.length ?? 0
     this.versoes.delete(chave)
     return n
+  }
+  async esvaziarBucket(simular: boolean, aoListar?: (chave: string, versao: string | null) => void): Promise<{ chaves: number; versoes: number }> {
+    let versoes = 0
+    for (const [chave, lista] of this.versoes) {
+      versoes += lista.length
+      for (const v of lista) aoListar?.(chave, v.id)
+    }
+    const r = { chaves: this.versoes.size, versoes }
+    if (!simular) this.versoes.clear()
+    return r
   }
   async verificarDisponibilidade(): Promise<boolean> {
     return true

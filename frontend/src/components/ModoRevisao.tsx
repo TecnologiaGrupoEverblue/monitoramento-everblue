@@ -1,18 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useForm, useWatch } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import type { z } from 'zod'
+import { esquemaDecisaoComite, formatarDocumento } from '@monitoramento/dominio'
+import { ErroApi } from '../api/cliente'
+import { Portal } from './ui/Portal'
+import { consultas, invalidar } from '../consultas'
 import { useNavigate } from 'react-router-dom'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { Alerta, ClienteEnriquecido, PlanoAcao, SnapshotSemanal } from '../models/types'
-import {
-  comiteAtaRepository,
-  eventoRepository,
-  planoAcaoRepository,
-  semanaMesAnteriorRef,
-  snapshotRepository,
-} from '../repositories'
-import { diasEntre, formatarData, formatarMoeda, formatarPercentual, formatarPercentualOpcional, STATUS_LABEL } from '../utils/formatters'
+import { comiteAtaRepository, semanaMesAnteriorRef } from '../repositories'
+import { diasEntre, formatarData, formatarDias, formatarMoeda, formatarPercentual, formatarPercentualOpcional, STATUS_LABEL } from '../utils/formatters'
 import ChecklistAnalise from './ChecklistAnalise'
 import PainelTransacional from './PainelTransacional'
 import { CriticidadeBadge, GravidadeBadge, PrioridadeBadge } from './ui/Badges'
+
+const esquemaFormDecisao = esquemaDecisaoComite.omit({ clienteId: true })
+type FormDecisao = z.input<typeof esquemaFormDecisao>
+type DecisaoValidada = z.output<typeof esquemaFormDecisao>
 
 interface DadosCaso {
   snapshotMesAnterior: SnapshotSemanal | null
@@ -38,47 +44,67 @@ export default function ModoRevisao({
 }) {
   const navigate = useNavigate()
   const [indice, setIndice] = useState(0)
-  const [dadosCaso, setDadosCaso] = useState<DadosCaso | null>(null)
-  const [decisao, setDecisao] = useState('')
-  const [plano, setPlano] = useState('')
-  const [responsavel, setResponsavel] = useState('')
-  const [prazo, setPrazo] = useState(comiteAtaRepository.sugerirPrazo())
-  const [salvando, setSalvando] = useState(false)
   const [qtdRegistradas, setQtdRegistradas] = useState(0)
   const [concluido, setConcluido] = useState(false)
+  const clienteConsultas = useQueryClient()
 
   const cliente = clientes[indice]
   const ultimo = indice === clientes.length - 1
+  const cid = cliente?.id ?? ''
 
+  // Dados do caso: semana do mês anterior, último plano, entrada no status e série.
+  const semanasQ = useQuery(consultas.semanas())
+  const semanas = semanasQ.data
+  const semanaAtualRef = cliente?.snapshotAtual?.semanaRef ?? semanas?.[semanas.length - 1]
+  const semanaMes = semanas && semanaAtualRef ? semanaMesAnteriorRef(semanas, semanaAtualRef) : null
+  const mesAnteriorQ = useQuery({ ...consultas.snapshotClienteSemana(cid, semanaMes ?? ''), enabled: Boolean(cliente && semanaMes) })
+  const [planosQ, eventosQ, serieQ] = useQueries({
+    queries: [
+      { ...consultas.planosCliente(cid), enabled: Boolean(cliente) },
+      { ...consultas.eventosCliente(cid), enabled: Boolean(cliente) },
+      { ...consultas.snapshotsCliente(cid), enabled: Boolean(cliente) },
+    ],
+  })
+  const dadosCaso = useMemo<DadosCaso | null>(() => {
+    if (!cliente || !semanas || !planosQ.data || !eventosQ.data || !serieQ.data) return null
+    if (semanaMes && mesAnteriorQ.isPending) return null
+    return {
+      snapshotMesAnterior: mesAnteriorQ.data ?? null,
+      ultimoPlano: [...planosQ.data].sort((a, b) => b.dataDecisaoAtual.localeCompare(a.dataDecisaoAtual))[0] ?? null,
+      dataEntradaStatus: eventosQ.data.find((e) => e.tipo === 'MUDANCA_STATUS' && e.valorNovo === cliente.status)?.data ?? null,
+      alertas: cliente.alertasAbertos,
+      serieHistorica: serieQ.data,
+    }
+  }, [cliente, semanas, semanaMes, mesAnteriorQ.isPending, mesAnteriorQ.data, planosQ.data, eventosQ.data, serieQ.data])
+
+  // Decisão do caso: mesmas regras da API (dominio/esquemas); limpa a cada caso.
+  const { register, handleSubmit, reset, control, formState } = useForm<FormDecisao, unknown, DecisaoValidada>({
+    resolver: zodResolver(esquemaFormDecisao),
+    defaultValues: { decisao: '', plano: '', responsavel: cliente?.responsavel ?? '', prazo: comiteAtaRepository.sugerirPrazo() },
+  })
   useEffect(() => {
-    if (!cliente) return
-    let ativo = true
-    setDadosCaso(null)
-    setDecisao('')
-    setPlano('')
-    setResponsavel(cliente.responsavel)
-    setPrazo(comiteAtaRepository.sugerirPrazo())
+    reset({ decisao: '', plano: '', responsavel: cliente?.responsavel ?? '', prazo: comiteAtaRepository.sugerirPrazo() })
+  }, [cliente, reset])
 
-    async function carregar() {
-      const semanas = await snapshotRepository.listarSemanasDisponiveis()
-      const semanaAtualRef = cliente.snapshotAtual?.semanaRef ?? semanas[semanas.length - 1]
-      const semanaMes = semanaMesAnteriorRef(semanas, semanaAtualRef)
-      const [snapshotMesAnterior, planosDoCliente, eventosDoCliente, serieHistorica] = await Promise.all([
-        semanaMes ? snapshotRepository.porClienteESemana(cliente.id, semanaMes) : Promise.resolve(null),
-        planoAcaoRepository.porCliente(cliente.id),
-        eventoRepository.porCliente(cliente.id),
-        snapshotRepository.porCliente(cliente.id),
-      ])
-      const ultimoPlano = [...planosDoCliente].sort((a, b) => b.dataDecisaoAtual.localeCompare(a.dataDecisaoAtual))[0] ?? null
-      const entradaStatus = eventosDoCliente.find((e) => e.tipo === 'MUDANCA_STATUS' && e.valorNovo === cliente.status)?.data ?? null
-      if (!ativo) return
-      setDadosCaso({ snapshotMesAnterior, ultimoPlano, dataEntradaStatus: entradaStatus, alertas: cliente.alertasAbertos, serieHistorica })
-    }
-    carregar()
-    return () => {
-      ativo = false
-    }
-  }, [cliente])
+  const [decisaoDigitada, responsavelDigitado] = useWatch({ control, name: ['decisao', 'responsavel'] })
+
+  const registrar = useMutation({
+    // Plano de ação e evento histórico são gravados juntos, no servidor,
+    // vinculados ao comitê planejado; quem registrou é a pessoa da sessão.
+    mutationFn: (d: DecisaoValidada) => comiteAtaRepository.registrarDecisao({ clienteId: cid, ...d, responsavel: d.responsavel || cliente!.responsavel }),
+    onSuccess: () => {
+      void invalidar(clienteConsultas, 'carteira')
+      setQtdRegistradas((n) => n + 1)
+      avancar()
+    },
+  })
+  const salvando = registrar.isPending
+  const erroDecisao =
+    formState.errors.decisao?.message ??
+    formState.errors.prazo?.message ??
+    formState.errors.plano?.message ??
+    formState.errors.responsavel?.message ??
+    (registrar.error ? (registrar.error instanceof ErroApi ? registrar.error.message : 'Não foi possível registrar a decisão.') : null)
 
   if (!cliente) return null
 
@@ -89,30 +115,17 @@ export default function ModoRevisao({
   const varMes = variacaoPerc(atual?.riscoCliente, dadosCaso?.snapshotMesAnterior?.riscoCliente)
   const diasNoStatus = dadosCaso?.dataEntradaStatus ? diasEntre(dadosCaso.dataEntradaStatus) : null
 
-  async function salvarERir() {
-    if (!decisao.trim()) {
-      await avancar()
+  function salvarERir() {
+    // Sem decisão digitada: só avança (o caso fica sem registro).
+    if (!decisaoDigitada.trim()) {
+      avancar()
       return
     }
-    setSalvando(true)
-    try {
-      // Plano de ação e evento histórico são gravados juntos, no servidor,
-      // vinculados ao comitê planejado; quem registrou é a pessoa da sessão.
-      await comiteAtaRepository.registrarDecisao({
-        clienteId: cliente.id,
-        decisao: decisao.trim(),
-        plano: plano.trim(),
-        prazo,
-        responsavel: responsavel.trim() || cliente.responsavel,
-      })
-    } finally {
-      setSalvando(false)
-    }
-    setQtdRegistradas((n) => n + 1)
-    await avancar()
+    void handleSubmit((d) => registrar.mutate(d))()
   }
 
-  async function avancar() {
+  function avancar() {
+    registrar.reset()
     if (ultimo) {
       setConcluido(true)
     } else {
@@ -126,7 +139,8 @@ export default function ModoRevisao({
 
   if (concluido) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'var(--cor-primaria-escura)' }}>
+      <Portal>
+      <div className="fixed inset-0 z-[55] flex items-center justify-center p-4" style={{ backgroundColor: 'var(--cor-primaria-escura)' }}>
         <div className="w-full max-w-md border bg-[var(--cor-superficie-solida)] p-6 text-center" style={{ borderColor: 'var(--cor-borda-forte)' }}>
           <p className="fonte-editorial text-2xl font-semibold" style={{ color: 'var(--cor-primaria)' }}>
             Revisão concluída
@@ -148,40 +162,42 @@ export default function ModoRevisao({
           </div>
         </div>
       </div>
+      </Portal>
     )
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ backgroundColor: 'var(--cor-fundo)' }}>
-      <div className="flex items-center justify-between border-b bg-[var(--cor-superficie-solida)] px-6 py-3" style={{ borderColor: 'var(--cor-borda-forte)' }}>
-        <div>
+    <Portal>
+    <div className="fixed inset-0 z-[55] flex flex-col" style={{ backgroundColor: 'var(--cor-fundo)' }}>
+      <div className="flex items-center justify-between gap-3 border-b bg-[var(--cor-superficie-solida)] px-4 py-3 sm:px-6" style={{ borderColor: 'var(--cor-borda-forte)' }}>
+        <div className="min-w-0">
           <p className="text-xs font-medium" style={{ color: 'var(--cor-texto-secundario)' }}>
             Modo de Revisão · {STATUS_LABEL[statusAtual] ?? statusAtual} · Caso {indice + 1} de {clientes.length}
           </p>
-          <p className="fonte-editorial text-lg font-semibold" style={{ color: 'var(--cor-primaria)' }}>
+          <p className="fonte-editorial truncate text-base font-semibold sm:text-lg" style={{ color: 'var(--cor-primaria)' }} title={cliente.nome}>
             {cliente.nome}
           </p>
         </div>
-        <button onClick={() => aoFechar(qtdRegistradas > 0)} className="px-3 py-1.5 text-sm hover:bg-[var(--cor-fundo-recuado)]">
-          Encerrar revisão ✕
+        <button onClick={() => aoFechar(qtdRegistradas > 0)} className="min-h-[44px] shrink-0 whitespace-nowrap px-3 text-sm hover:bg-[var(--cor-fundo-recuado)]">
+          Encerrar <span className="hidden sm:inline">revisão</span> ✕
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-8 py-5">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-3 py-4 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-5">
           <div className="flex flex-wrap items-center gap-2">
             <CriticidadeBadge criticidade={cliente.criticidade} />
             <PrioridadeBadge prioridade={cliente.prioridade} />
             <span className="text-xs" style={{ color: 'var(--cor-texto-secundario)' }}>
-              {cliente.grupoEconomico?.nome} · {cliente.gerente?.nome} · {cliente.plataforma?.nome}
+              {formatarDocumento(cliente.cnpj)} · {cliente.grupoEconomico?.nome} · {cliente.gerente?.nome} · {cliente.plataforma?.nome}
             </span>
           </div>
 
-          <div className="border bg-[var(--cor-superficie-solida)] p-4" style={{ borderColor: 'var(--cor-borda)' }}>
+          <div className="border bg-[var(--cor-superficie-solida)] p-3 sm:p-4" style={{ borderColor: 'var(--cor-borda)' }}>
             <p className="mb-3 border-b pb-2 text-[13px] font-semibold" style={{ color: 'var(--cor-texto-secundario)', borderColor: 'var(--cor-borda)' }}>
               Checklist de Análise Semanal — roteiro do comitê para este caso
             </p>
-            <ChecklistAnalise clienteId={cliente.id} semanaRef={atual?.semanaRef ?? null} usuario={responsavel || cliente.responsavel} />
+            <ChecklistAnalise clienteId={cliente.id} semanaRef={atual?.semanaRef ?? null} usuario={responsavelDigitado || cliente.responsavel} />
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -211,8 +227,8 @@ export default function ModoRevisao({
               <Fato titulo="Vencido oficial" valor={formatarMoeda(atual?.vencidoOficial ?? 0)} />
               <Fato titulo="% Vencido" valor={formatarPercentual(percVencido)} />
               <Fato titulo="IL 30 / 90 dias" valor={`${formatarPercentualOpcional(atual?.il30)} / ${formatarPercentualOpcional(atual?.il90)}`} />
-              <Fato titulo="Aging da carteira" valor={`${atual?.agingCarteiraDias ?? 0} dias`} />
-              <Fato titulo="Atraso médio" valor={`${atual?.atrasoMedioDias ?? 0} dias`} />
+              <Fato titulo="Aging da carteira" valor={atual ? formatarDias(atual.agingCarteiraDias) : '—'} />
+              <Fato titulo="Atraso médio" valor={atual && atual.atrasoMedioDias !== null ? formatarDias(atual.atrasoMedioDias) : 'Não informado'} />
               <Fato titulo="Restritivos" valor={String(atual?.restritivos ?? 0)} />
             </div>
           </div>
@@ -241,7 +257,7 @@ export default function ModoRevisao({
                 Alertas abertos ({dadosCaso?.alertas.length ?? 0})
               </p>
               {!dadosCaso || dadosCaso.alertas.length === 0 ? (
-                <p className="text-xs text-gray-400">Nenhum alerta em aberto.</p>
+                <p className="text-xs text-[color:var(--cor-texto-secundario)]">Nenhum alerta em aberto.</p>
               ) : (
                 <ul className="flex flex-col gap-1.5">
                   {dadosCaso.alertas.slice(0, 4).map((a) => (
@@ -266,7 +282,7 @@ export default function ModoRevisao({
                   </p>
                 </>
               ) : (
-                <p className="text-xs text-gray-400">Nenhuma decisão anterior registrada.</p>
+                <p className="text-xs text-[color:var(--cor-texto-secundario)]">Nenhuma decisão anterior registrada.</p>
               )}
             </div>
           </div>
@@ -279,8 +295,9 @@ export default function ModoRevisao({
               <label className="flex flex-col gap-1 text-sm">
                 Nova decisão
                 <textarea
-                  value={decisao}
-                  onChange={(e) => setDecisao(e.target.value)}
+                  {...register('decisao')}
+                  maxLength={2000}
+                  aria-invalid={Boolean(formState.errors.decisao)}
                   rows={3}
                   placeholder="Ex.: Manter em monitoramento com revisão quinzenal…"
                   className="border px-2 py-1.5 text-sm"
@@ -290,8 +307,8 @@ export default function ModoRevisao({
               <label className="flex flex-col gap-1 text-sm">
                 Plano de ação
                 <textarea
-                  value={plano}
-                  onChange={(e) => setPlano(e.target.value)}
+                  {...register('plano')}
+                  maxLength={4000}
                   rows={3}
                   placeholder="O que o cliente precisa fazer e até quando…"
                   className="border px-2 py-1.5 text-sm"
@@ -302,13 +319,18 @@ export default function ModoRevisao({
             <div className="mt-3 grid grid-cols-2 gap-3 lg:w-1/2">
               <label className="flex flex-col gap-1 text-sm">
                 Responsável
-                <input value={responsavel} onChange={(e) => setResponsavel(e.target.value)} className="border px-2 py-1.5 text-sm" style={{ borderColor: 'var(--cor-borda)' }} />
+                <input {...register('responsavel')} maxLength={200} className="border px-2 py-1.5 text-sm" style={{ borderColor: 'var(--cor-borda)' }} />
               </label>
               <label className="flex flex-col gap-1 text-sm">
                 Prazo
-                <input type="date" value={prazo} onChange={(e) => setPrazo(e.target.value)} className="border px-2 py-1.5 text-sm" style={{ borderColor: 'var(--cor-borda)' }} />
+                <input type="date" {...register('prazo')} aria-invalid={Boolean(formState.errors.prazo)} className="border px-2 py-1.5 text-sm" style={{ borderColor: 'var(--cor-borda)' }} />
               </label>
             </div>
+            {erroDecisao && (
+              <p role="alert" className="mt-3 border-l-2 p-2 text-xs" style={{ borderColor: 'var(--cor-critico)', backgroundColor: 'var(--cor-critico-fundo)', color: 'var(--cor-critico)' }}>
+                {erroDecisao}
+              </p>
+            )}
             <p className="mt-3 text-[11px]" style={{ color: 'var(--cor-texto-secundario)' }}>
               Ao salvar, a decisão vira um Plano de Ação vinculado ao próximo Comitê e passa a compor a Ata quando ela for gerada.
             </p>
@@ -316,25 +338,26 @@ export default function ModoRevisao({
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t bg-[var(--cor-superficie-solida)] px-6 py-3" style={{ borderColor: 'var(--cor-borda-forte)' }}>
-        <button onClick={voltar} disabled={indice === 0} className="border px-4 py-2 text-sm disabled:opacity-30" style={{ borderColor: 'var(--cor-borda-forte)' }}>
-          ← Caso anterior
+      <div className="flex items-center justify-between gap-2 border-t bg-[var(--cor-superficie-solida)] px-3 py-3 sm:px-6" style={{ borderColor: 'var(--cor-borda-forte)' }}>
+        <button onClick={voltar} disabled={indice === 0} aria-label="Caso anterior" className="min-h-[44px] shrink-0 border px-3 text-sm disabled:opacity-30 sm:px-4" style={{ borderColor: 'var(--cor-borda-forte)' }}>
+          ← <span className="hidden sm:inline">Caso anterior</span>
         </button>
-        <div className="flex gap-2">
-          <button onClick={avancar} className="px-4 py-2 text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
-            Pular sem registrar
+        <div className="flex min-w-0 gap-2">
+          <button onClick={avancar} className="min-h-[44px] px-2 text-sm sm:px-4" style={{ color: 'var(--cor-texto-secundario)' }}>
+            Pular<span className="hidden sm:inline"> sem registrar</span>
           </button>
           <button
             onClick={salvarERir}
             disabled={salvando}
-            className="px-5 py-2 text-sm font-medium text-white disabled:opacity-60"
+            className="min-h-[44px] px-4 text-sm font-medium text-white disabled:opacity-60 sm:px-5"
             style={{ backgroundColor: 'var(--cor-acao)' }}
           >
-            {ultimo ? 'Salvar e concluir revisão' : 'Salvar e avançar →'}
+            {salvando ? 'Salvando…' : ultimo ? 'Salvar e concluir' : 'Salvar e avançar →'}
           </button>
         </div>
       </div>
     </div>
+    </Portal>
   )
 }
 

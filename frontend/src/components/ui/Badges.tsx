@@ -1,14 +1,13 @@
 import { criticidadeClassificadaCor, criticidadeCor, enquadramentoCor, gravidadeCor, prioridadeCor, statusCor, statusPlanoCor } from '../../theme/colors'
 import { CRITICIDADE_LABEL, GRAVIDADE_LABEL, PRIORIDADE_LABEL, ROTULO_CRITICIDADE_CLASSIFICADA, ROTULO_ENQUADRAMENTO, STATUS_LABEL, STATUS_PLANO_LABEL } from '../../utils/formatters'
 
-/** Etiqueta de classificação — um carimbo retangular com borda à esquerda,
- * não uma pílula. É a mesma linguagem em qualquer lugar do sistema onde um
- * status/risco precisa ser identificado de relance. */
+/** Etiqueta de classificação no padrão da Intranet: pílula com fundo
+ * suave e texto na cor do status, sem borda. A mesma em todo o sistema. */
 function Badge({ texto, cor, fundo }: { texto: string; cor: string; fundo: string }) {
   return (
     <span
-      className="inline-flex items-center rounded-md border-l-2 px-2 py-0.5 text-[11.5px] font-semibold whitespace-nowrap"
-      style={{ color: cor, backgroundColor: fundo, borderColor: cor }}
+      className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold whitespace-nowrap"
+      style={{ color: cor, backgroundColor: fundo }}
     >
       {texto}
     </span>

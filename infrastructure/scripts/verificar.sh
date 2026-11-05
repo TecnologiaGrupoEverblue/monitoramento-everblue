@@ -42,6 +42,7 @@ checar "migrações aplicadas"                 bash -c "[ \"\$(docker compose ex
 checar "versões e trilha de arquivo imutáveis" bash -c "[ \"\$(docker compose exec -T db psql -U '${POSTGRES_USER}' -d '${POSTGRES_DB}' -tAc \"SELECT count(*) FROM pg_trigger WHERE tgname IN ('arquivo_versao_append_only','arquivo_evento_append_only')\" | tr -d '[:space:]\r')\" = 2 ]"
 checar "aplicação NÃO é superusuária"        bash -c "[ \"\$(docker compose exec -T db psql -U '${POSTGRES_USER}' -d '${POSTGRES_DB}' -tAc \"SELECT rolsuper FROM pg_roles WHERE rolname='${POSTGRES_APP_USER}'\" | tr -d '[:space:]\r')\" = f ]"
 checar "auditoria é imutável"                bash -c "[ \"\$(docker compose exec -T db psql -U '${POSTGRES_USER}' -d '${POSTGRES_DB}' -tAc \"SELECT count(*) FROM pg_trigger WHERE tgname IN ('auditoria_append_only')\" | tr -d '[:space:]\r')\" = 1 ]"
+checar "fotos permanentes protegidas (ADR-021)" bash -c "[ \"\$(docker compose exec -T db psql -U '${POSTGRES_USER}' -d '${POSTGRES_DB}' -tAc \"SELECT count(*) FROM pg_trigger WHERE tgname IN ('foto_execucao_sem_exclusao','arquivo_foto_protegido','foto_cliente_append_only','foto_mapa_append_only')\" | tr -d '[:space:]\r')\" = 4 ]"
 BD -c "SELECT 'usuarios' AS tabela, count(*) FROM usuario
        UNION ALL SELECT 'clientes', count(*) FROM cliente
        UNION ALL SELECT 'snapshots', count(*) FROM snapshot_semanal

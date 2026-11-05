@@ -1,15 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import GraficoBarrasDimensao, { type ItemDimensao } from '../components/charts/GraficoBarrasDimensao'
 import GraficoEntradasSaidas from '../components/charts/GraficoEntradasSaidas'
 import GraficoLinhaSerie from '../components/charts/GraficoLinhaSerie'
 import GraficoPizza from '../components/charts/GraficoPizza'
 import PainelDiretoria from '../components/PainelDiretoria'
+import { GradeEquilibrada } from '../components/ui/GradeEquilibrada'
 import { KpiCard, NumeroHero, Painel } from '../components/ui/Card'
 import { useDrillDown } from '../contexts/DrillDownContext'
 import { useFiltros } from '../contexts/FiltrosContext'
 import { criticidadeCor } from '../theme/colors'
-import { dashboardRepository, type KPIsDashboard } from '../repositories'
-import type { PainelSemanal } from '../models/types'
+import { consultas } from '../consultas'
+import { ErroCarga } from '../components/ui/EstadoCarga'
 import { formatarData, formatarMoeda, formatarPercentual, formatarVariacao } from '../utils/formatters'
 
 type Dimensao = 'status' | 'gerenteId' | 'plataformaId' | 'setor' | 'grupoEconomicoId' | 'produto'
@@ -18,67 +19,47 @@ export default function DashboardExecutivo() {
   const { filtros, carregando: carregandoFiltros } = useFiltros()
   const { abrir } = useDrillDown()
 
-  const [kpis, setKpis] = useState<KPIsDashboard | null>(null)
-  const [serieRisco, setSerieRisco] = useState<{ semana: string; risco: number; vencido: number }[]>([])
-  const [porStatus, setPorStatus] = useState<ItemDimensao[]>([])
-  const [porGerente, setPorGerente] = useState<ItemDimensao[]>([])
-  const [porPlataforma, setPorPlataforma] = useState<ItemDimensao[]>([])
-  const [porProduto, setPorProduto] = useState<ItemDimensao[]>([])
-  const [porSetor, setPorSetor] = useState<ItemDimensao[]>([])
-  const [porGrupo, setPorGrupo] = useState<ItemDimensao[]>([])
-  const [porCriticidade, setPorCriticidade] = useState<{ criticidade: string; qtd: number; clienteIds: string[] }[]>([])
-  const [entradasSaidas, setEntradasSaidas] = useState<{ semana: string; entradas: number; saidas: number }[]>([])
-  const [carregando, setCarregando] = useState(true)
-  const [painel, setPainel] = useState<PainelSemanal | null>(null)
-
-  useEffect(() => {
-    if (carregandoFiltros) return
-    let ativo = true
-    setCarregando(true)
-    Promise.all([
-      dashboardRepository.obterKPIs(filtros),
-      dashboardRepository.serieEvolucaoSemanal(filtros),
-      dashboardRepository.riscoPorDimensao(filtros, 'status'),
-      dashboardRepository.riscoPorDimensao(filtros, 'gerenteId'),
-      dashboardRepository.riscoPorDimensao(filtros, 'plataformaId'),
-      dashboardRepository.riscoPorDimensao(filtros, 'produto'),
-      dashboardRepository.riscoPorDimensao(filtros, 'setor'),
-      dashboardRepository.riscoPorDimensao(filtros, 'grupoEconomicoId'),
-      dashboardRepository.clientesPorCriticidade(filtros),
-      dashboardRepository.evolucaoEntradasSaidasMonitoramento(filtros),
-      dashboardRepository.painelSemanal(filtros),
-    ]).then(([k, serie, status, gerente, plataforma, produto, setor, grupo, criticidade, entSai, painelSemanal]) => {
-      if (!ativo) return
-      setPainel(painelSemanal)
-      setKpis(k)
-      setSerieRisco(serie)
-      setPorStatus(status)
-      setPorGerente(gerente)
-      setPorPlataforma(plataforma)
-      setPorProduto(produto)
-      setPorSetor(setor)
-      setPorGrupo(grupo)
-      setPorCriticidade(criticidade)
-      setEntradasSaidas(entSai)
-      setCarregando(false)
-    })
-    return () => {
-      ativo = false
-    }
-  }, [filtros, carregandoFiltros])
+  const clienteConsultas = useQueryClient()
+  const ativo = { enabled: !carregandoFiltros }
+  const qKpis = useQuery({ ...consultas.kpis(filtros), ...ativo })
+  const qSerie = useQuery({ ...consultas.serieSemanal(filtros), ...ativo })
+  const qStatus = useQuery({ ...consultas.riscoPorDimensao(filtros, 'status'), ...ativo })
+  const qGerente = useQuery({ ...consultas.riscoPorDimensao(filtros, 'gerenteId'), ...ativo })
+  const qPlataforma = useQuery({ ...consultas.riscoPorDimensao(filtros, 'plataformaId'), ...ativo })
+  const qProduto = useQuery({ ...consultas.riscoPorDimensao(filtros, 'produto'), ...ativo })
+  const qSetor = useQuery({ ...consultas.riscoPorDimensao(filtros, 'setor'), ...ativo })
+  const qGrupo = useQuery({ ...consultas.riscoPorDimensao(filtros, 'grupoEconomicoId'), ...ativo })
+  const qCriticidade = useQuery({ ...consultas.criticidade(filtros), ...ativo })
+  const qEntSai = useQuery({ ...consultas.entradasSaidas(filtros), ...ativo })
+  const qPainel = useQuery({ ...consultas.painelSemanal(filtros), ...ativo })
+  const kpis = qKpis.data ?? null
+  const serieRisco = qSerie.data ?? []
+  const porStatus: ItemDimensao[] = qStatus.data ?? []
+  const porGerente: ItemDimensao[] = qGerente.data ?? []
+  const porPlataforma: ItemDimensao[] = qPlataforma.data ?? []
+  const porProduto: ItemDimensao[] = qProduto.data ?? []
+  const porSetor: ItemDimensao[] = qSetor.data ?? []
+  const porGrupo: ItemDimensao[] = qGrupo.data ?? []
+  const porCriticidade = qCriticidade.data ?? []
+  const entradasSaidas = qEntSai.data ?? []
+  const painel = qPainel.data ?? null
+  const todas = [qKpis, qSerie, qStatus, qGerente, qPlataforma, qProduto, qSetor, qGrupo, qCriticidade, qEntSai, qPainel]
+  const carregando = todas.some((q) => q.isPending)
+  const erro = todas.find((q) => q.error)?.error ?? null
 
   function abrirPorDimensao(dimensao: Dimensao) {
     return (item: ItemDimensao) => abrir(`${rotuloDimensao(dimensao)}: ${item.label}`, item.clienteIds)
   }
 
   async function abrirSemana(semana: string) {
-    const todos = await dashboardRepository.riscoPorDimensao({ ...filtros, semanaRef: semana }, 'status')
+    const todos = await clienteConsultas.fetchQuery(consultas.riscoPorDimensao({ ...filtros, semanaRef: semana }, 'status'))
     const ids = Array.from(new Set(todos.flatMap((i) => i.clienteIds)))
     abrir(`Posição de ${formatarData(semana)}`, ids)
   }
 
+  if (erro) return <ErroCarga erro={erro} aoTentarDeNovo={() => void Promise.all(todas.map((q) => q.refetch()))} />
   if (carregando || !kpis) {
-    return <p className="text-sm text-gray-500">Carregando dashboard…</p>
+    return <p className="text-sm text-[color:var(--cor-texto-secundario)]">Carregando dashboard…</p>
   }
 
   const { atual, anterior } = kpis
@@ -106,7 +87,7 @@ export default function DashboardExecutivo() {
         />
       </div>
       <div className="border bg-[var(--cor-superficie-solida)] p-5" style={{ borderColor: 'var(--cor-borda)' }}>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <GradeEquilibrada larguraMinima={170} espaco={0}>
           <KpiCard titulo="Vencido oficial" valor={formatarMoeda(atual.vencido)} valorAnterior={{ atual: atual.vencido, anterior: anterior.vencido }} destaque="critico" />
           <KpiCard titulo="% Vencido" valor={formatarPercentual(atual.percVencido)} formatoVariacao="percentual" destaque="critico" />
           <KpiCard titulo="Clientes/unidades expostas" valor={String(atual.qtdClientes)} formatoVariacao="numero" />
@@ -157,12 +138,12 @@ export default function DashboardExecutivo() {
             />
           )}
           {atual.qtdApartados > 0 && <KpiCard titulo="Vencido da carteira apartada" valor={formatarMoeda(atual.vencidoApartado)} formatoVariacao="numero" />}
-        </div>
+        </GradeEquilibrada>
       </div>
 
       {painel && <PainelDiretoria painel={painel} />}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Painel titulo="Evolução semanal do risco — clique num ponto para ver os clientes">
           <GraficoLinhaSerie dados={serieRisco} chaveValor="risco" cor="var(--cor-primaria)" onClickPonto={abrirSemana} />
         </Painel>
@@ -195,11 +176,11 @@ export default function DashboardExecutivo() {
           <GraficoBarrasDimensao dados={porSetor} onClickBarra={abrirPorDimensao('setor')} />
         </Painel>
 
-        <Painel titulo="Risco por grupo econômico (top 10)" className="lg:col-span-2">
+        <Painel titulo="Risco por grupo econômico (top 10)" className="xl:col-span-2">
           <GraficoBarrasDimensao dados={porGrupo} onClickBarra={abrirPorDimensao('grupoEconomicoId')} limite={10} />
         </Painel>
 
-        <Painel titulo="Evolução de entradas e saídas de Monitoramento" className="lg:col-span-2">
+        <Painel titulo="Evolução de entradas e saídas de Monitoramento" className="xl:col-span-2">
           <GraficoEntradasSaidas dados={entradasSaidas} />
         </Painel>
       </div>

@@ -19,7 +19,7 @@ export default function HistoricoDecisoes({
   const [editando, setEditando] = useState<PlanoAcao | null>(null)
   const ordenados = [...planos].sort((a, b) => b.dataDecisaoAtual.localeCompare(a.dataDecisaoAtual) || b.id.localeCompare(a.id))
   return (
-    <Painel titulo={`Histórico de decisões do comitê (${planos.length})`} className="lg:col-span-2">
+    <Painel titulo={`Histórico de decisões do comitê (${planos.length})`} className="xl:col-span-2">
       {ordenados.length === 0 ? (
         <p className="py-4 text-center text-sm" style={{ color: 'var(--cor-texto-secundario)' }}>
           Nenhuma decisão registrada. Decisões entram pelo Modo de Revisão do comitê.
